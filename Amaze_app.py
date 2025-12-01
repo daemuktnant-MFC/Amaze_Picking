@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
 import gspread
+import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from datetime import datetime
 from PIL import Image
-from pyzbar.pyzbar import decode 
+from pyzbar.pyzbar import decode
+
 
 # --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
@@ -46,9 +48,11 @@ def load_sheet_data():
 # --- FUNCTION: GOOGLE DRIVE ---
 def authenticate_drive():
     try:
-        creds = service_account.Credentials.from_service_account_file(
-            CREDENTIALS_FILE, scopes=['https://www.googleapis.com/auth/drive']
-        )
+        #creds = service_account.Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=['https://www.googleapis.com/auth/drive'])
+        key_dict = dict(st.secrets["gcp_service_account"])
+
+        creds = service_account.Credentials.from_service_account_info(key_dict, scopes=['https://www.googleapis.com/auth/drive'])
+        
         return build('drive', 'v3', credentials=creds)
     except Exception as e:
         st.error(f"Error Drive: {e}")
@@ -214,4 +218,5 @@ if order_input:
                             # Reset ค่าเพื่อเตรียมชิ้นต่อไป (แต่เก็บ Order ไว้)
                             st.session_state.prod_val = ""
                             st.session_state.loc_val = ""
+
                             st.rerun()
