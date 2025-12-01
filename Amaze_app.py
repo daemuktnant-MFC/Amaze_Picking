@@ -6,37 +6,32 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from datetime import datetime
 from PIL import Image
-from pyzbar.pyzbar import decode 
+from pyzbar.pyzbar import decode
+from google.oauth2.credentials import Credentials
+import requests
 
 # --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 
 # --- HELPER: GET CREDENTIALS ---
-# ฟังก์ชันนี้ฉลาด: ถ้ามีไฟล์ json (ในเครื่อง) จะใช้อันนั้น
-# แต่ถ้าไม่มี (บน Cloud) จะไปอ่านจาก st.secrets แทน
-def get_credentials(scopes):
+def get_credentials(scopes=None): # scopes ไม่จำเป็นแล้วสำหรับ refresh token แต่ใส่ไว้กัน error
     try:
-        # กรณีรันในเครื่อง (Local)
-        return service_account.Credentials.from_service_account_file(
-            'service_account.json', scopes=scopes
+        # ดึงค่าจาก Secrets
+        info = st.secrets["oauth"]
+        
+        # สร้าง Credentials จาก Refresh Token
+        creds = Credentials(
+            None, # token (access token ชั่วคราว เดี๋ยว library เจนใหม่ให้เอง)
+            refresh_token=info["refresh_token"],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=info["client_id"],
+            client_secret=info["client_secret"]
         )
-    except Exception:
-        # กรณีรันบน Cloud (Streamlit Cloud)
-        try:
-            # ดึงจาก Secrets และแปลงเป็น Dict
-            key_dict = dict(st.secrets["gcp_service_account"])
-            
-            # แปลง private_key ให้ถูกต้อง (บางที TOML ตัด \n ทิ้ง)
-            # สำคัญมาก! บรรทัดนี้ช่วยแก้บั๊กเวลา Deploy แล้ว Key พัง
-            key_dict["private_key"] = key_dict["private_key"].replace("\\n", "\n")
-            
-            return service_account.Credentials.from_service_account_info(
-                key_dict, scopes=scopes
-            )
-        except Exception as e:
-            st.error(f"❌ ไม่สามารถอ่าน Credentials ได้ (ทั้งไฟล์และ Secrets): {e}")
-            return None
+        return creds
+    except Exception as e:
+        st.error(f"❌ Login ไม่ได้: {e}")
+        return None
 
 # --- FUNCTION: GOOGLE SHEET ---
 @st.cache_data(ttl=600)
@@ -218,4 +213,5 @@ if order_input:
                             st.session_state.prod_val = ""
                             st.session_state.loc_val = ""
                             st.rerun()
+
 
