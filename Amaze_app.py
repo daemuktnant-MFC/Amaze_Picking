@@ -1,57 +1,61 @@
 import streamlit as st
 import pandas as pd
 import gspread
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials # สำคัญ: ใช้สำหรับ OAuth
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from datetime import datetime
 from PIL import Image
-from pyzbar.pyzbar import decode
-from google.oauth2.credentials import Credentials
-import requests
+from pyzbar.pyzbar import decode 
 
 # --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 
-# --- HELPER: GET CREDENTIALS ---
-def get_credentials(scopes=None): # scopes ไม่จำเป็นแล้วสำหรับ refresh token แต่ใส่ไว้กัน error
+# --- HELPER: GET CREDENTIALS (OAUTH 2.0) ---
+# ฟังก์ชันนี้จะดึง Refresh Token จาก Secrets มาสร้างกุญแจเข้าบ้าน
+def get_credentials():
     try:
-        # ดึงค่าจาก Secrets
-        info = st.secrets["oauth"]
-        
-        # สร้าง Credentials จาก Refresh Token
-        creds = Credentials(
-            None, # token (access token ชั่วคราว เดี๋ยว library เจนใหม่ให้เอง)
-            refresh_token=info["refresh_token"],
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=info["client_id"],
-            client_secret=info["client_secret"]
-        )
-        return creds
+        # ดึงค่าจาก st.secrets หมวด [oauth]
+        if "oauth" in st.secrets:
+            info = st.secrets["oauth"]
+            
+            # สร้าง Credentials
+            creds = Credentials(
+                None, # access_token (เดี๋ยวระบบเจนใหม่เอง)
+                refresh_token=info["refresh_token"],
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=info["client_id"],
+                client_secret=info["client_secret"]
+            )
+            return creds
+        else:
+            st.error("❌ ไม่พบข้อมูล [oauth] ใน Secrets กรุณาตั้งค่าใน Streamlit Cloud")
+            return None
     except Exception as e:
-        st.error(f"❌ Login ไม่ได้: {e}")
+        st.error(f"❌ สร้าง Credentials ไม่สำเร็จ: {e}")
         return None
 
 # --- FUNCTION: GOOGLE SHEET ---
 @st.cache_data(ttl=600)
 def load_sheet_data():
     try:
-        scopes = [
-            'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive'
-        ]
-        
-        creds = get_credentials(scopes)
-        if not creds: return pd.DataFrame() # จบการทำงานถ้าไม่มีกุญแจ
-        
+        # 1. ขอกุญแจ
+        creds = get_credentials()
+        if not creds: return pd.DataFrame()
+
+        # 2. เชื่อมต่อ gspread
         gc = gspread.authorize(creds)
+        
+        # 3. เปิดไฟล์ Sheet
         sh = gc.open_by_key(SHEET_ID)
         worksheet = sh.get_worksheet(0)
         
+        # 4. โหลดข้อมูล
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
         
+        # จัดการเรื่อง Barcode ให้เป็นตัวหนังสือ (ป้องกัน .0 ต่อท้าย)
         if 'Barcode' in df.columns:
             try:
                 df['Barcode'] = df['Barcode'].astype(str).str.replace(r'\.0$', '', regex=True)
@@ -60,26 +64,31 @@ def load_sheet_data():
             
         return df
     except Exception as e:
-        # st.error(f"❌ อ่าน Google Sheet ไม่ได้: {e}") # ปิด error นี้ไว้ก่อนถ้าไม่อยากให้รก
-        print(f"Sheet Error: {e}")
+        print(f"Sheet Error: {e}") # ดู Log ใน Console ได้ถ้ามีปัญหา
+        # st.error(f"อ่าน Sheet ไม่ได้: {e}") 
         return pd.DataFrame()
 
 # --- FUNCTION: GOOGLE DRIVE ---
 def authenticate_drive():
     try:
-        scopes = ['https://www.googleapis.com/auth/drive']
-        creds = get_credentials(scopes)
-        return build('drive', 'v3', credentials=creds)
+        creds = get_credentials()
+        if creds:
+            return build('drive', 'v3', credentials=creds)
+        return None
     except Exception as e:
-        st.error(f"Error Drive: {e}")
+        st.error(f"Error Drive Connection: {e}")
         return None
 
 def create_or_get_order_folder(service, order_id, parent_id):
+    # ค้นหาว่ามี Folder ชื่อนี้หรือยัง
     query = f"name = '{order_id}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     files = results.get('files', [])
-    if files: return files[0]['id']
+    
+    if files: 
+        return files[0]['id'] # เจอแล้วใช้ ID เดิม
     else:
+        # ไม่เจอ สร้างใหม่
         file_metadata = {'name': order_id, 'parents': [parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
         folder = service.files().create(body=file_metadata, fields='id').execute()
         return folder.get('id')
@@ -91,27 +100,26 @@ def upload_photo(service, file_obj, filename, folder_id):
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
         return file.get('id')
     except Exception as e:
-        # สั่งให้ Print รายละเอียด Error ออกมาทางหน้าจอเลย
-        st.error(f"🔴 เกิดข้อผิดพลาดในการอัปโหลด: {e}")
-        # ถ้ามีรายละเอียดเพิ่มเติมจาก Google ให้โชว์ด้วย
-        if hasattr(e, 'content'):
-            st.code(e.content.decode('utf-8')) # แสดง JSON error เต็มๆ
-        raise e # ส่ง error ต่อให้โปรแกรมหยุดทำงานตามปกติ
+        st.error(f"🔴 อัปโหลดไม่ผ่าน: {e}")
+        raise e
 
 # --- UI SETUP ---
-st.set_page_config(page_title="Smart Picking w/ Sheet", page_icon="📊")
+st.set_page_config(page_title="Smart Picking (OAuth)", page_icon="📦")
 
+# เริ่มต้นตัวแปร Session State
 if 'order_val' not in st.session_state: st.session_state.order_val = ""
 if 'prod_val' not in st.session_state: st.session_state.prod_val = ""
 if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
 
-st.title("📊 ระบบเบิกสินค้า (Cloud Ready)")
+st.title("📦 ระบบเบิกสินค้า (Ready)")
 
-# โหลดข้อมูล
+# โหลดข้อมูลสินค้าจาก Sheet (Cache ไว้จะได้ไม่โหลดบ่อย)
 df_items = load_sheet_data()
 
-# 1. ORDER
-st.markdown("#### 1. Order ID")
+# ==========================================
+# 1. ORDER ID
+# ==========================================
+st.markdown("#### 1. ระบุ Order ID")
 col_o1, col_o2 = st.columns([4, 1])
 with col_o2:
     use_cam_order = st.checkbox("📷", key="tog_order")
@@ -126,7 +134,9 @@ if use_cam_order:
 
 order_input = col_o1.text_input("Scan/พิมพ์ Order ID", value=st.session_state.order_val, key="input_order").strip().upper()
 
-# 2. PRODUCT
+# ==========================================
+# 2. PRODUCT SCAN
+# ==========================================
 if order_input:
     st.session_state.order_val = order_input
     st.markdown("---")
@@ -146,6 +156,7 @@ if order_input:
 
     prod_input = col_p1.text_input("Scan Barcode สินค้า", value=st.session_state.prod_val, key="input_prod").strip()
 
+    # ตรวจสอบข้อมูลใน Sheet
     target_loc_str = None
     if prod_input:
         if not df_items.empty:
@@ -162,9 +173,11 @@ if order_input:
             else:
                 st.error(f"❌ ไม่พบ Barcode ใน Sheet")
         else:
-             st.warning("⚠️ กำลังเชื่อมต่อฐานข้อมูล...")
+             st.warning("⚠️ กำลังโหลดฐานข้อมูลสินค้า...")
 
-    # 3. LOCATION
+    # ==========================================
+    # 3. LOCATION VERIFY
+    # ==========================================
     if prod_input and target_loc_str:
         st.markdown("---")
         st.markdown(f"#### 3. ยืนยัน Location: `{target_loc_str}`")
@@ -194,7 +207,9 @@ if order_input:
             else:
                 st.error(f"❌ ผิดตำแหน่ง")
 
-        # 4. PACK
+        # ==========================================
+        # 4. PACK & UPLOAD
+        # ==========================================
         if valid_loc:
             st.markdown("---")
             final_img = st.camera_input("ถ่ายรูปปิดกล่อง", key="cam_final")
@@ -207,11 +222,13 @@ if order_input:
                             fid = create_or_get_order_folder(srv, order_input, MAIN_FOLDER_ID)
                             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                             fn = f"{order_input}_{prod_input}_LOC-{loc_input_val}_{ts}.jpg"
+                            
                             upload_photo(srv, final_img, fn, fid)
+                            
                             st.balloons()
-                            st.success("บันทึกเรียบร้อย!")
+                            st.success(f"บันทึกสำเร็จ! ({fn})")
+                            
+                            # Reset ค่า เตรียมยิงตัวต่อไป (แต่ Order ยังคงไว้)
                             st.session_state.prod_val = ""
                             st.session_state.loc_val = ""
                             st.rerun()
-
-
