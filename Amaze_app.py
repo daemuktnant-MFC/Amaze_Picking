@@ -1,4 +1,4 @@
-#import streamlit as st
+import streamlit as st  # <--- แก้ไข 1: เอา # ออกเพื่อเรียกใช้ Streamlit
 from streamlit_back_camera_input import back_camera_input
 import pandas as pd
 import gspread
@@ -14,7 +14,7 @@ import time
 
 # --- 1. CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
-SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I' # Sheet เดียวกับที่ดึงข้อมูลสินค้า
+SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 
 # --- 2. HELPER FUNCTIONS ---
 def read_barcode_from_image(img_file):
@@ -61,7 +61,7 @@ def load_sheet_data():
     except Exception:
         return pd.DataFrame()
 
-# 🔥 ฟังก์ชันใหม่: บันทึกประวัติลง Sheet
+# ฟังก์ชันบันทึกประวัติลง Sheet
 def log_to_history(order_id, prod_code, loc_code, img_count):
     try:
         creds = get_credentials()
@@ -157,9 +157,11 @@ if st.session_state.order_val:
             match = df_items[df_items['Barcode'] == st.session_state.prod_val]
             if not match.empty:
                 row = match.iloc[0]
+                # รวม Zone และ Location
                 target_loc_str = f"{str(row.get('Zone', '')).strip()}-{str(row.get('Location', '')).strip()}"
                 
                 if st.session_state.loc_val:
+                    # ตรวจสอบ Location (อนุโลมให้ถูกบางส่วนได้)
                     if st.session_state.loc_val == target_loc_str or st.session_state.loc_val in target_loc_str:
                          current_step = 4
                          step_title = f"4. ถ่ายรูปแพ็ค ({len(st.session_state.photo_gallery)}/5)"
@@ -184,12 +186,13 @@ with st.container():
         st.success("✅ ครบ 5 รูปแล้ว กด Upload ได้เลย")
 
     if show_cam:
-        st.markdown('<p class="camera-hint">💡 หากเป็นกล้องหน้า ให้กดปุ่ม "สลับกล้อง" ที่มุมขวาล่างของวิดีโอ</p>', unsafe_allow_html=True)
-        image_file = back_camera_input()("ถ่ายรูป/สแกน", key=f"cam_{st.session_state.cam_id}", label_visibility="collapsed")
+        # ใช้ back_camera_input แทน st.camera_input
+        # <--- แก้ไข 2: ลบวงเล็บซ้อน และใส่ Label ให้ถูกต้อง
+        image_file = back_camera_input(key=f"cam_{st.session_state.cam_id}")
         
-        if img_file:
+        if image_file:
             if current_step < 4:
-                code = read_barcode_from_image(img_file)
+                code = read_barcode_from_image(image_file)
                 if code:
                     code = code.upper()
                     if current_step == 1:
@@ -206,9 +209,10 @@ with st.container():
                     st.session_state.cam_id += 1
                     st.rerun()
                 else:
-                    st.warning("⚠️ อ่าน Barcode ไม่ได้")
+                    st.warning("⚠️ อ่าน Barcode ไม่ได้ (ลองขยับกล้องหรือใช้การพิมพ์)")
             else:
-                st.session_state.photo_gallery.append(img_file.getvalue())
+                # ขั้นตอนที่ 4 ถ่ายรูปสินค้า (ไม่ต้องอ่าน Barcode)
+                st.session_state.photo_gallery.append(image_file.getvalue())
                 st.toast(f"บันทึกรูปที่ {len(st.session_state.photo_gallery)}")
                 st.session_state.cam_id += 1
                 st.rerun()
@@ -319,4 +323,3 @@ with st.expander("📝 กรอกเอง / Upload รูป"):
         st.session_state.photo_gallery = []
         st.session_state.cam_id += 1
         st.rerun()
-
