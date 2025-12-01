@@ -90,10 +90,18 @@ def create_or_get_order_folder(service, order_id, parent_id):
         return folder.get('id')
 
 def upload_photo(service, file_obj, filename, folder_id):
-    file_metadata = {'name': filename, 'parents': [folder_id]}
-    media = MediaIoBaseUpload(file_obj, mimetype='image/jpeg')
-    file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-    return file.get('id')
+    try:
+        file_metadata = {'name': filename, 'parents': [folder_id]}
+        media = MediaIoBaseUpload(file_obj, mimetype='image/jpeg')
+        file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        return file.get('id')
+    except Exception as e:
+        # สั่งให้ Print รายละเอียด Error ออกมาทางหน้าจอเลย
+        st.error(f"🔴 เกิดข้อผิดพลาดในการอัปโหลด: {e}")
+        # ถ้ามีรายละเอียดเพิ่มเติมจาก Google ให้โชว์ด้วย
+        if hasattr(e, 'content'):
+            st.code(e.content.decode('utf-8')) # แสดง JSON error เต็มๆ
+        raise e # ส่ง error ต่อให้โปรแกรมหยุดทำงานตามปกติ
 
 # --- UI SETUP ---
 st.set_page_config(page_title="Smart Picking w/ Sheet", page_icon="📊")
@@ -210,3 +218,4 @@ if order_input:
                             st.session_state.prod_val = ""
                             st.session_state.loc_val = ""
                             st.rerun()
+
