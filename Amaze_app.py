@@ -8,6 +8,7 @@ from datetime import datetime
 from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
+import time
 
 # --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
@@ -65,12 +66,10 @@ def authenticate_drive():
         return None
 
 def create_or_get_order_folder(service, order_id, parent_id):
-    # --- ส่วนที่แก้ไข: เพิ่มวันที่นำหน้าชื่อ Folder ---
-    # รูปแบบ: วัน-เดือน-ปี_OrderID (เช่น 01-12-2025_B17)
+    # ชื่อ Folder มีวันที่นำหน้า
     date_prefix = datetime.now().strftime("%d-%m-%Y")
     folder_name = f"{date_prefix}_{order_id}"
     
-    # ค้นหาด้วยชื่อใหม่
     query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     files = results.get('files', [])
@@ -78,7 +77,6 @@ def create_or_get_order_folder(service, order_id, parent_id):
     if files: 
         return files[0]['id']
     else:
-        # สร้าง Folder ด้วยชื่อใหม่
         file_metadata = {'name': folder_name, 'parents': [parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
         folder = service.files().create(body=file_metadata, fields='id').execute()
         return folder.get('id')
@@ -195,12 +193,20 @@ if order_input:
             st.markdown("---")
             st.markdown(f"#### 4. ถ่ายรูปปิดกล่อง ({len(st.session_state.photo_gallery)}/5)")
             
+            # --- ส่วนแสดง Gallery พร้อมปุ่มลบ ---
             if st.session_state.photo_gallery:
+                # สร้าง Columns เท่ากับจำนวนรูปที่มี (สูงสุด 5)
                 cols = st.columns(5)
                 for idx, img_data in enumerate(st.session_state.photo_gallery):
                     with cols[idx]:
-                        st.image(img_data, caption=f"รูป {idx+1}", use_column_width=True)
+                        # แสดงรูป
+                        st.image(img_data, caption=f"รูปที่ {idx+1}", use_column_width=True)
+                        # ปุ่มลบ (ใช้ key ให้ไม่ซ้ำกันตาม index)
+                        if st.button("🗑️ ลบ", key=f"del_btn_{idx}"):
+                            st.session_state.photo_gallery.pop(idx) # ลบรูปออกจากลิสต์
+                            st.rerun() # รีเฟรชหน้าจอทันที
             
+            # ส่วนกล้อง (แสดงถ้ายังไม่ครบ 5 รูป)
             if len(st.session_state.photo_gallery) < 5:
                 cam_key = f"cam_pack_{st.session_state.cam_counter}"
                 pack_img = st.camera_input("ถ่ายรูปสินค้า", key=cam_key)
@@ -211,8 +217,9 @@ if order_input:
                     st.session_state.cam_counter += 1
                     st.rerun()
             else:
-                st.info("📷 ครบ 5 รูปแล้ว")
+                st.info("📷 ครบ 5 รูปแล้ว (หากต้องการถ่ายใหม่ ให้กดลบรูปเดิมก่อน)")
 
+            # ปุ่ม Upload
             if len(st.session_state.photo_gallery) > 0:
                 st.markdown("---")
                 if st.button(f"☁️ Upload {len(st.session_state.photo_gallery)} รูป ขึ้น Drive", type="primary"):
@@ -229,9 +236,9 @@ if order_input:
                             st.balloons()
                             st.success(f"บันทึกเรียบร้อย! (Folder: {datetime.now().strftime('%d-%m-%Y')}_{order_input})")
                             
-                            import time
                             time.sleep(2) 
                             
+                            # Reset ค่าต่างๆ
                             st.session_state.order_val = ""
                             st.session_state.prod_val = ""
                             st.session_state.loc_val = ""
