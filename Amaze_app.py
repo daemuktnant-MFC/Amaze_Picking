@@ -1,4 +1,5 @@
-import streamlit as st
+#import streamlit as st
+from streamlit_back_camera_input import back_camera_input
 import pandas as pd
 import gspread
 from google.oauth2.credentials import Credentials
@@ -184,7 +185,7 @@ with st.container():
 
     if show_cam:
         st.markdown('<p class="camera-hint">💡 หากเป็นกล้องหน้า ให้กดปุ่ม "สลับกล้อง" ที่มุมขวาล่างของวิดีโอ</p>', unsafe_allow_html=True)
-        img_file = st.camera_input("ถ่ายรูป/สแกน", key=f"cam_{st.session_state.cam_id}", label_visibility="collapsed")
+        image_file = back_camera_input()("ถ่ายรูป/สแกน", key=f"cam_{st.session_state.cam_id}", label_visibility="collapsed")
         
         if img_file:
             if current_step < 4:
@@ -318,3 +319,4 @@ with st.expander("📝 กรอกเอง / Upload รูป"):
         st.session_state.photo_gallery = []
         st.session_state.cam_id += 1
         st.rerun()
+
