@@ -5,6 +5,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from datetime import datetime
+import pytz # ✅ เพิ่ม Library จัดการ Timezone
 from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
@@ -39,7 +40,7 @@ def get_credentials():
     except Exception:
         return None
 
-# --- 3. GOOGLE SERVICES (Drive & Sheets) ---
+# --- 3. GOOGLE SERVICES ---
 @st.cache_data(ttl=600)
 def load_sheet_data():
     try:
@@ -68,17 +69,14 @@ def authenticate_drive():
         st.error(f"Error Drive: {e}")
         return None
 
-# 🔥 ฟังก์ชันสร้าง Folder แบบใหม่ (Generic)
 def get_or_create_folder(service, folder_name, parent_id):
-    # ค้นหาว่ามี Folder ชื่อนี้อยู่แล้วหรือไม่
     query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     files = results.get('files', [])
     
     if files:
-        return files[0]['id'] # ถ้ามี ให้ใช้ ID เดิม
+        return files[0]['id']
     else:
-        # ถ้าไม่มี ให้สร้างใหม่
         file_metadata = {'name': folder_name, 'parents': [parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
         folder = service.files().create(body=file_metadata, fields='id').execute()
         return folder.get('id')
@@ -118,7 +116,7 @@ if 'cam_id' not in st.session_state: st.session_state.cam_id = 0
 
 df_items = load_sheet_data()
 
-# --- LOGIC: กำหนด Step ---
+# --- LOGIC ---
 current_step = 1
 step_title = "1. สแกน Order ID"
 target_loc_str = None
@@ -147,7 +145,7 @@ if st.session_state.order_val:
             else:
                 st.error("❌ ไม่พบข้อมูลสินค้า")
 
-# --- 📱 UI HEADER ---
+# --- UI ---
 st.title("📱 Smart Picking")
 
 with st.container():
@@ -160,8 +158,7 @@ with st.container():
 
     if show_cam:
         st.markdown('<p class="camera-hint">💡 หากเป็นกล้องหน้า ให้กดปุ่ม "สลับกล้อง" ที่มุมขวาล่างของวิดีโอ</p>', unsafe_allow_html=True)
-        cam_label = "ถ่ายรูป/สแกน"
-        img_file = st.camera_input(cam_label, key=f"cam_{st.session_state.cam_id}", label_visibility="collapsed")
+        img_file = st.camera_input("ถ่ายรูป/สแกน", key=f"cam_{st.session_state.cam_id}", label_visibility="collapsed")
         
         if img_file:
             if current_step < 4:
@@ -189,7 +186,7 @@ with st.container():
                 st.session_state.cam_id += 1
                 st.rerun()
 
-# --- 📊 DASHBOARD ---
+# --- DASHBOARD ---
 st.markdown("---")
 c1, c2, c3 = st.columns(3)
 c1.metric("Order", st.session_state.order_val if st.session_state.order_val else "-")
@@ -202,7 +199,7 @@ if target_loc_str and current_step >= 3:
     elif current_step == 3:
         st.info(f"📍 เป้าหมาย: **{target_loc_str}**")
 
-# --- 🖼️ GALLERY & UPLOAD (Step 4) ---
+# --- UPLOAD SECTION (Fixed Timezone) ---
 if current_step == 4:
     if st.session_state.photo_gallery:
         st.write("รูปที่ถ่ายแล้ว:")
@@ -216,25 +213,31 @@ if current_step == 4:
     
     if st.session_state.photo_gallery:
         if st.button(f"☁️ Upload {len(st.session_state.photo_gallery)} รูป", type="primary"):
-             with st.spinner("🚀 กำลังสร้าง Folder และอัปโหลด..."):
+             with st.spinner("🚀 กำลังบันทึกข้อมูล (เวลาไทย)..."):
                 srv = authenticate_drive()
                 if srv:
-                    # 🔥 Step 1: สร้าง/หา Folder วันที่ (เช่น 02-12-2025)
-                    date_str = datetime.now().strftime("%d-%m-%Y")
+                    # ✅ แก้ไข: ดึงเวลาปัจจุบันเขต Asia/Bangkok
+                    tz_thai = pytz.timezone('Asia/Bangkok')
+                    now_thai = datetime.now(tz_thai)
+
+                    # ใช้เวลาไทยในการตั้งชื่อ Folder
+                    date_str = now_thai.strftime("%d-%m-%Y")
+                    time_str = now_thai.strftime("%H_%M")
+                    
+                    # 1. สร้าง Folder วันที่
                     date_folder_id = get_or_create_folder(srv, date_str, MAIN_FOLDER_ID)
 
-                    # 🔥 Step 2: สร้าง Folder ย่อย Order+เวลา (เช่น B30-22_15)
-                    time_str = datetime.now().strftime("%H_%M")
+                    # 2. สร้าง Sub-Folder (Order + เวลาไทย)
                     sub_folder_name = f"{st.session_state.order_val}-{time_str}"
                     final_folder_id = get_or_create_folder(srv, sub_folder_name, date_folder_id)
 
-                    # 🔥 Step 3: อัปโหลดรูปลง Folder ย่อย
+                    # 3. อัปโหลดรูป
                     for i, b in enumerate(st.session_state.photo_gallery):
                         fn = f"{sub_folder_name}_Img{i+1}.jpg"
                         upload_photo(srv, b, fn, final_folder_id)
                     
                     st.balloons()
-                    st.success(f"บันทึกสำเร็จ! (Folder: {date_str} > {sub_folder_name})")
+                    st.success(f"บันทึกสำเร็จ! ({sub_folder_name})")
                     time.sleep(2)
                     
                     # Reset
@@ -248,11 +251,9 @@ if current_step == 4:
                     st.session_state.cam_id += 1
                     st.rerun()
 
-# --- ✏️ MANUAL / BACKUP INPUT ---
+# --- BACKUP INPUT ---
 with st.expander("📝 กรอกเอง / Upload รูป"):
-    st.caption("ใช้เมื่อกล้องหลักสแกนไม่ได้")
-    
-    up_file = st.file_uploader("ถ่ายรูป/อัปโหลด Barcode", type=['jpg','png','jpeg'])
+    up_file = st.file_uploader("อัปโหลด Barcode", type=['jpg','png','jpeg'])
     if up_file:
         code = read_barcode_from_image(up_file)
         if code:
