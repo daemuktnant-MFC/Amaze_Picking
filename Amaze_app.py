@@ -5,7 +5,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from datetime import datetime
-import pytz # ✅ เพิ่ม Library จัดการ Timezone
+import pytz 
 from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
@@ -13,7 +13,7 @@ import time
 
 # --- 1. CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
-SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
+SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I' # Sheet เดียวกับที่ดึงข้อมูลสินค้า
 
 # --- 2. HELPER FUNCTIONS ---
 def read_barcode_from_image(img_file):
@@ -40,7 +40,7 @@ def get_credentials():
     except Exception:
         return None
 
-# --- 3. GOOGLE SERVICES ---
+# --- 3. GOOGLE SERVICES (Drive & Sheets) ---
 @st.cache_data(ttl=600)
 def load_sheet_data():
     try:
@@ -48,7 +48,7 @@ def load_sheet_data():
         if not creds: return pd.DataFrame()
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(SHEET_ID)
-        worksheet = sh.get_worksheet(0)
+        worksheet = sh.get_worksheet(0) # อ่าน Sheet แรกเป็น Master Data
         data = worksheet.get_all_records()
         df = pd.DataFrame(data)
         if 'Barcode' in df.columns:
@@ -59,6 +59,32 @@ def load_sheet_data():
         return df
     except Exception:
         return pd.DataFrame()
+
+# 🔥 ฟังก์ชันใหม่: บันทึกประวัติลง Sheet
+def log_to_history(order_id, prod_code, loc_code, img_count):
+    try:
+        creds = get_credentials()
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SHEET_ID)
+
+        # พยายามเปิดแท็บ 'History' ถ้าไม่มีให้สร้างใหม่
+        try:
+            worksheet = sh.worksheet("History")
+        except:
+            worksheet = sh.add_worksheet(title="History", rows=1000, cols=10)
+            # สร้างหัวตาราง (Header)
+            worksheet.append_row(["Timestamp (Thai)", "Order ID", "Product Barcode", "Location", "Images Count", "Status"])
+
+        # เวลาไทย
+        tz_thai = pytz.timezone('Asia/Bangkok')
+        now_str = datetime.now(tz_thai).strftime("%Y-%m-%d %H:%M:%S")
+
+        # บันทึกข้อมูลต่อท้าย (Append)
+        worksheet.append_row([now_str, order_id, prod_code, loc_code, img_count, "Success"])
+        return True
+    except Exception as e:
+        st.error(f"⚠️ บันทึก History ไม่สำเร็จ: {e}")
+        return False
 
 def authenticate_drive():
     try:
@@ -199,7 +225,7 @@ if target_loc_str and current_step >= 3:
     elif current_step == 3:
         st.info(f"📍 เป้าหมาย: **{target_loc_str}**")
 
-# --- UPLOAD SECTION (Fixed Timezone) ---
+# --- UPLOAD SECTION ---
 if current_step == 4:
     if st.session_state.photo_gallery:
         st.write("รูปที่ถ่ายแล้ว:")
@@ -213,31 +239,37 @@ if current_step == 4:
     
     if st.session_state.photo_gallery:
         if st.button(f"☁️ Upload {len(st.session_state.photo_gallery)} รูป", type="primary"):
-             with st.spinner("🚀 กำลังบันทึกข้อมูล (เวลาไทย)..."):
+             with st.spinner("🚀 กำลังบันทึกข้อมูล (Drive + Sheet)..."):
                 srv = authenticate_drive()
                 if srv:
-                    # ✅ แก้ไข: ดึงเวลาปัจจุบันเขต Asia/Bangkok
+                    # 1. Drive Upload Process
                     tz_thai = pytz.timezone('Asia/Bangkok')
                     now_thai = datetime.now(tz_thai)
-
-                    # ใช้เวลาไทยในการตั้งชื่อ Folder
                     date_str = now_thai.strftime("%d-%m-%Y")
                     time_str = now_thai.strftime("%H_%M")
                     
-                    # 1. สร้าง Folder วันที่
                     date_folder_id = get_or_create_folder(srv, date_str, MAIN_FOLDER_ID)
-
-                    # 2. สร้าง Sub-Folder (Order + เวลาไทย)
                     sub_folder_name = f"{st.session_state.order_val}-{time_str}"
                     final_folder_id = get_or_create_folder(srv, sub_folder_name, date_folder_id)
 
-                    # 3. อัปโหลดรูป
                     for i, b in enumerate(st.session_state.photo_gallery):
                         fn = f"{sub_folder_name}_Img{i+1}.jpg"
                         upload_photo(srv, b, fn, final_folder_id)
+
+                    # 2. 🔥 Sheet Logging Process
+                    log_success = log_to_history(
+                        st.session_state.order_val, 
+                        st.session_state.prod_val, 
+                        st.session_state.loc_val, 
+                        len(st.session_state.photo_gallery)
+                    )
                     
                     st.balloons()
-                    st.success(f"บันทึกสำเร็จ! ({sub_folder_name})")
+                    if log_success:
+                        st.success(f"บันทึกสำเร็จ! (Drive: {sub_folder_name} | Sheet: History Updated)")
+                    else:
+                        st.warning(f"บันทึกรูปสำเร็จ แต่ลง Sheet ไม่สำเร็จ")
+                    
                     time.sleep(2)
                     
                     # Reset
