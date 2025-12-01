@@ -107,4 +107,181 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Init State
-if 'order_val' not
+if 'order_val' not in st.session_state: st.session_state.order_val = ""
+if 'prod_val' not in st.session_state: st.session_state.prod_val = ""
+if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
+if 'input_order' not in st.session_state: st.session_state.input_order = ""
+if 'input_prod' not in st.session_state: st.session_state.input_prod = ""
+if 'input_loc' not in st.session_state: st.session_state.input_loc = ""
+if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
+if 'cam_id' not in st.session_state: st.session_state.cam_id = 0
+
+df_items = load_sheet_data()
+
+# --- LOGIC: กำหนด Step ---
+current_step = 1
+step_title = "1. สแกน Order ID"
+target_loc_str = None
+
+if st.session_state.order_val:
+    current_step = 2
+    step_title = "2. สแกน Barcode สินค้า"
+    
+    if st.session_state.prod_val:
+        if not df_items.empty:
+            match = df_items[df_items['Barcode'] == st.session_state.prod_val]
+            if not match.empty:
+                row = match.iloc[0]
+                target_loc_str = f"{str(row.get('Zone', '')).strip()}-{str(row.get('Location', '')).strip()}"
+                
+                if st.session_state.loc_val:
+                    if st.session_state.loc_val == target_loc_str or st.session_state.loc_val in target_loc_str:
+                         current_step = 4
+                         step_title = f"4. ถ่ายรูปแพ็ค ({len(st.session_state.photo_gallery)}/5)"
+                    else:
+                         current_step = 3
+                         step_title = "3. สแกน Location (ผิด❌)"
+                else:
+                    current_step = 3
+                    step_title = f"3. ยืนยัน Location: {target_loc_str}"
+            else:
+                st.error("❌ ไม่พบข้อมูลสินค้า")
+
+# --- 📱 UI HEADER ---
+st.title("📱 Smart Picking")
+
+with st.container():
+    st.info(f"👉 ขั้นตอน: **{step_title}**")
+    
+    show_cam = True
+    if current_step == 4 and len(st.session_state.photo_gallery) >= 5:
+        show_cam = False
+        st.success("✅ ครบ 5 รูปแล้ว กด Upload ได้เลย")
+
+    if show_cam:
+        st.markdown('<p class="camera-hint">💡 หากเป็นกล้องหน้า ให้กดปุ่ม "สลับกล้อง" ที่มุมขวาล่างของวิดีโอ</p>', unsafe_allow_html=True)
+        cam_label = "ถ่ายรูป/สแกน"
+        img_file = st.camera_input(cam_label, key=f"cam_{st.session_state.cam_id}", label_visibility="collapsed")
+        
+        if img_file:
+            if current_step < 4:
+                code = read_barcode_from_image(img_file)
+                if code:
+                    code = code.upper()
+                    if current_step == 1:
+                        st.session_state.order_val = code
+                        st.session_state.input_order = code
+                    elif current_step == 2:
+                        st.session_state.prod_val = code
+                        st.session_state.input_prod = code
+                    elif current_step == 3:
+                        st.session_state.loc_val = code
+                        st.session_state.input_loc = code
+                    
+                    st.toast(f"✅ อ่านค่า: {code}")
+                    st.session_state.cam_id += 1
+                    st.rerun()
+                else:
+                    st.warning("⚠️ อ่าน Barcode ไม่ได้")
+            else:
+                st.session_state.photo_gallery.append(img_file.getvalue())
+                st.toast(f"บันทึกรูปที่ {len(st.session_state.photo_gallery)}")
+                st.session_state.cam_id += 1
+                st.rerun()
+
+# --- 📊 DASHBOARD ---
+st.markdown("---")
+c1, c2, c3 = st.columns(3)
+c1.metric("Order", st.session_state.order_val if st.session_state.order_val else "-")
+c2.metric("Product", "✅" if st.session_state.prod_val else "-")
+c3.metric("Location", "✅" if current_step == 4 else "-")
+
+if target_loc_str and current_step >= 3:
+    if current_step == 3 and st.session_state.loc_val:
+        st.error(f"❌ ผิดตำแหน่ง (อยู่ที่: {st.session_state.loc_val})")
+    elif current_step == 3:
+        st.info(f"📍 เป้าหมาย: **{target_loc_str}**")
+
+# --- 🖼️ GALLERY & UPLOAD (Step 4) ---
+if current_step == 4:
+    if st.session_state.photo_gallery:
+        st.write("รูปที่ถ่ายแล้ว:")
+        g_cols = st.columns(5)
+        for i, img in enumerate(st.session_state.photo_gallery):
+            with g_cols[i]:
+                st.image(img, use_column_width=True)
+                if st.button("ลบ", key=f"del_{i}"):
+                    st.session_state.photo_gallery.pop(i)
+                    st.rerun()
+    
+    if st.session_state.photo_gallery:
+        if st.button(f"☁️ Upload {len(st.session_state.photo_gallery)} รูป", type="primary"):
+             with st.spinner("🚀 กำลังสร้าง Folder และอัปโหลด..."):
+                srv = authenticate_drive()
+                if srv:
+                    # 🔥 Step 1: สร้าง/หา Folder วันที่ (เช่น 02-12-2025)
+                    date_str = datetime.now().strftime("%d-%m-%Y")
+                    date_folder_id = get_or_create_folder(srv, date_str, MAIN_FOLDER_ID)
+
+                    # 🔥 Step 2: สร้าง Folder ย่อย Order+เวลา (เช่น B30-22_15)
+                    time_str = datetime.now().strftime("%H_%M")
+                    sub_folder_name = f"{st.session_state.order_val}-{time_str}"
+                    final_folder_id = get_or_create_folder(srv, sub_folder_name, date_folder_id)
+
+                    # 🔥 Step 3: อัปโหลดรูปลง Folder ย่อย
+                    for i, b in enumerate(st.session_state.photo_gallery):
+                        fn = f"{sub_folder_name}_Img{i+1}.jpg"
+                        upload_photo(srv, b, fn, final_folder_id)
+                    
+                    st.balloons()
+                    st.success(f"บันทึกสำเร็จ! (Folder: {date_str} > {sub_folder_name})")
+                    time.sleep(2)
+                    
+                    # Reset
+                    st.session_state.order_val = ""
+                    st.session_state.prod_val = ""
+                    st.session_state.loc_val = ""
+                    st.session_state.input_order = ""
+                    st.session_state.input_prod = ""
+                    st.session_state.input_loc = ""
+                    st.session_state.photo_gallery = []
+                    st.session_state.cam_id += 1
+                    st.rerun()
+
+# --- ✏️ MANUAL / BACKUP INPUT ---
+with st.expander("📝 กรอกเอง / Upload รูป"):
+    st.caption("ใช้เมื่อกล้องหลักสแกนไม่ได้")
+    
+    up_file = st.file_uploader("ถ่ายรูป/อัปโหลด Barcode", type=['jpg','png','jpeg'])
+    if up_file:
+        code = read_barcode_from_image(up_file)
+        if code:
+            code = code.upper()
+            if not st.session_state.order_val:
+                st.session_state.order_val = code
+                st.session_state.input_order = code
+            elif not st.session_state.prod_val:
+                st.session_state.prod_val = code
+                st.session_state.input_prod = code
+            elif not st.session_state.loc_val:
+                st.session_state.loc_val = code
+                st.session_state.input_loc = code
+            st.rerun()
+
+    st.markdown("---")
+    st.text_input("พิมพ์ Order ID", key="input_order", on_change=sync_input_state, args=("input_order", "order_val"))
+    if st.session_state.order_val:
+        st.text_input("พิมพ์ Product Barcode", key="input_prod", on_change=sync_input_state, args=("input_prod", "prod_val"))
+    if st.session_state.prod_val:
+        st.text_input("พิมพ์ Location", key="input_loc", on_change=sync_input_state, args=("input_loc", "loc_val"))
+        
+    if st.button("Reset / เริ่มใหม่"):
+        st.session_state.order_val = ""
+        st.session_state.prod_val = ""
+        st.session_state.loc_val = ""
+        st.session_state.input_order = ""
+        st.session_state.input_prod = ""
+        st.session_state.input_loc = ""
+        st.session_state.photo_gallery = []
+        st.session_state.cam_id += 1
+        st.rerun()
