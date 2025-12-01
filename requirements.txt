@@ -6,4 +6,4 @@ google-auth-httplib2
 google-auth-oauthlib
 Pillow
 pyzbar
-pytz
+streamlit-back-camera-input
