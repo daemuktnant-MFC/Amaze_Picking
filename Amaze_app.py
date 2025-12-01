@@ -89,19 +89,24 @@ def upload_photo(service, file_obj, filename, folder_id):
     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     return file.get('id')
 
-# --- ฟังก์ชันช่วยจำค่า (ป้องกันการเด้งหลุด) ---
+# --- ฟังก์ชันช่วยจำค่า ---
 def sync_input_state(key_name, val_name):
-    # ฟังก์ชันนี้จะคอยอัปเดตตัวแปรหลักเมื่อมีการพิมพ์ในช่อง
     if key_name in st.session_state:
         st.session_state[val_name] = st.session_state[key_name]
 
 # --- 4. UI SETUP ---
 st.set_page_config(page_title="Smart Picking (Stable)", page_icon="📦")
 
-# Initialize State (ตัวแปรจำค่า)
+# Initialize State Logic
 if 'order_val' not in st.session_state: st.session_state.order_val = ""
 if 'prod_val' not in st.session_state: st.session_state.prod_val = ""
 if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
+
+# 🔥 แก้ไข 1: ต้องประกาศค่าเริ่มต้นให้ Key ของ Widget เสมอ (เพื่อไม่ให้ error เมื่อเราลบ value=... ออก)
+if 'input_order' not in st.session_state: st.session_state.input_order = ""
+if 'input_prod' not in st.session_state: st.session_state.input_prod = ""
+if 'input_loc' not in st.session_state: st.session_state.input_loc = ""
+
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
 
@@ -110,7 +115,7 @@ if 'key_cam_order' not in st.session_state: st.session_state.key_cam_order = 0
 if 'key_cam_prod' not in st.session_state: st.session_state.key_cam_prod = 0
 if 'key_cam_loc' not in st.session_state: st.session_state.key_cam_loc = 0
 
-st.title("📦 ระบบเบิกสินค้า (เสถียร)")
+st.title("📦 ระบบเบิกสินค้า (Fix Error)")
 df_items = load_sheet_data()
 
 # ==========================================
@@ -129,15 +134,13 @@ if use_cam_order:
         if res:
             res_upper = res.upper()
             st.session_state.order_val = res_upper
-            # 🔥 สำคัญ: ยัดค่าใส่ช่อง Input โดยตรง กันเด้ง
-            st.session_state.input_order = res_upper 
+            st.session_state.input_order = res_upper # Force update widget
             st.session_state.key_cam_order += 1 
             st.rerun()
 
-# ช่อง Input: เพิ่ม on_change เพื่อจำค่าเมื่อพิมพ์และกด Enter
+# 🔥 แก้ไข 2: ลบ value=... ออก ให้เหลือแต่ key
 order_input = col_o1.text_input(
     "Scan/พิมพ์ Order ID", 
-    value=st.session_state.order_val, 
     key="input_order",
     on_change=sync_input_state, args=("input_order", "order_val")
 ).strip().upper()
@@ -159,15 +162,13 @@ if order_input:
             res_p = read_barcode_from_image(img_file_p)
             if res_p:
                 st.session_state.prod_val = res_p
-                # 🔥 สำคัญ: ยัดค่าใส่ช่อง Input โดยตรง
-                st.session_state.input_prod = res_p 
+                st.session_state.input_prod = res_p # Force update widget
                 st.session_state.key_cam_prod += 1
                 st.rerun()
 
-    # ช่อง Input Product
+    # 🔥 แก้ไข 3: ลบ value=... ออก
     prod_input = col_p1.text_input(
         "Scan Barcode สินค้า", 
-        value=st.session_state.prod_val, 
         key="input_prod",
         on_change=sync_input_state, args=("input_prod", "prod_val")
     ).strip()
@@ -209,15 +210,13 @@ if order_input:
                 if res_l:
                     res_l_upper = res_l.upper()
                     st.session_state.loc_val = res_l_upper
-                    # 🔥 สำคัญ: ยัดค่าใส่ช่อง Input โดยตรง
-                    st.session_state.input_loc = res_l_upper
+                    st.session_state.input_loc = res_l_upper # Force update widget
                     st.session_state.key_cam_loc += 1
                     st.rerun()
 
-        # ช่อง Input Location
+        # 🔥 แก้ไข 4: ลบ value=... ออก
         loc_input_val = col_l1.text_input(
             "Scan Location", 
-            value=st.session_state.loc_val, 
             key="input_loc",
             on_change=sync_input_state, args=("input_loc", "loc_val")
         ).strip().upper()
@@ -276,7 +275,7 @@ if order_input:
                             st.success(f"บันทึกเรียบร้อย!")
                             time.sleep(2) 
                             
-                            # Reset ค่าต่างๆ ให้เคลียร์จริงๆ
+                            # Reset ค่าต่างๆ
                             st.session_state.order_val = ""
                             st.session_state.input_order = "" # Clear Input
                             st.session_state.prod_val = ""
