@@ -47,6 +47,19 @@ def sync_input_state(key_name, val_name):
         st.toast(f"✅ รับข้อมูล: {st.session_state[key_name]}")
         st.session_state[key_name] = ""
 
+# ฟังก์ชันสำหรับ Reset ค่าทั้งหมด (ต้องทำผ่าน Callback เพื่อป้องกัน Error)
+def reset_all_data():
+    st.session_state.order_val = ""
+    st.session_state.prod_val = ""
+    st.session_state.loc_val = ""
+    st.session_state.photo_gallery = []
+    st.session_state.cam_id += 1
+    
+    # ล้างค่าในช่องกรอก (ทำใน callback ได้ไม่ error)
+    if 'input_order' in st.session_state: st.session_state.input_order = ""
+    if 'input_prod' in st.session_state: st.session_state.input_prod = ""
+    if 'input_loc' in st.session_state: st.session_state.input_loc = ""
+
 # --- 3. GOOGLE SERVICES ---
 @st.cache_data(ttl=600)
 def load_sheet_data():
@@ -297,15 +310,8 @@ if current_step == 4:
                     st.toast("✅ บันทึกสำเร็จ!", icon="🎉")
                     time.sleep(2)
                     
-                    # Reset
-                    st.session_state.order_val = ""
-                    st.session_state.prod_val = ""
-                    st.session_state.loc_val = ""
-                    st.session_state.input_order = ""
-                    st.session_state.input_prod = ""
-                    st.session_state.input_loc = ""
-                    st.session_state.photo_gallery = []
-                    st.session_state.cam_id += 1
+                    # Reset ผ่านฟังก์ชัน reset_all_data โดยตรง (ไม่ต้องผ่าน callback เพราะอยู่นอกปุ่ม reset)
+                    reset_all_data()
                     st.rerun()
 
 # --- MANUAL INPUT (Compact) ---
@@ -318,14 +324,5 @@ with st.expander("⌨️ กรอกเอง / เริ่มใหม่"):
     
     st.text_input("Location", key="input_loc", on_change=sync_input_state, args=("input_loc", "loc_val"))
         
-    if st.button("🔄 Reset ทั้งหมด", use_container_width=True):
-        st.session_state.order_val = ""
-        st.session_state.prod_val = ""
-        st.session_state.loc_val = ""
-        st.session_state.input_order = ""
-        st.session_state.input_prod = ""
-        st.session_state.input_loc = ""
-        st.session_state.photo_gallery = []
-        st.session_state.cam_id += 1
-        st.rerun()
-
+    # แก้ไขปุ่ม Reset ให้เรียกใช้ Callback function
+    st.button("🔄 Reset ทั้งหมด", use_container_width=True, on_click=reset_all_data)
