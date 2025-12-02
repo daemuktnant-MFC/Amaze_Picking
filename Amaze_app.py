@@ -11,13 +11,13 @@ import io
 import time
 import pytz
 
-# --- IMPORT LIBRARY กล้องตัวพิเศษ ---
+# --- IMPORT LIBRARY กล้องตัวพิเศษ (ใช้เฉพาะส่วนสแกน) ---
 try:
     from streamlit_back_camera_input import back_camera_input
 except ImportError:
     st.error("⚠️ กรุณาเพิ่ม 'streamlit-back-camera-input' ในไฟล์ requirements.txt")
     st.stop()
-
+    
 # --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
@@ -390,10 +390,15 @@ elif st.session_state.order_val and st.session_state.packing_mode:
     st.info("✅ หยิบครบแล้ว เข้าสู่ขั้นตอนแพ็คสินค้า")
     st.markdown(f"#### 3. ถ่ายรูปปิดกล่อง ({len(st.session_state.photo_gallery)}/5)")
     
-    # 3.1 CAMERA
+    # 3.1 CAMERA (เปลี่ยนมาใช้ st.camera_input มาตรฐาน)
     if len(st.session_state.photo_gallery) < 5:
         pack_key = f"cam_pack_{st.session_state.cam_counter}"
-        pack_img = back_camera_input("แตะเพื่อถ่ายรูปกล่องสินค้า", key=pack_key)
+        
+        # --- เปลี่ยนโค้ดตรงนี้ ---
+        # ใช้ st.camera_input มาตรฐานแทน back_camera_input
+        pack_img = st.camera_input("แตะเพื่อถ่ายรูปกล่องสินค้า (ถ้าค้างให้รีโหลด)", key=pack_key)
+        # -----------------------
+
         if pack_img:
             st.session_state.photo_gallery.append(pack_img.getvalue())
             st.session_state.cam_counter += 1
@@ -422,32 +427,29 @@ elif st.session_state.order_val and st.session_state.packing_mode:
             with st.spinner("กำลังอัปโหลด... ห้ามปิดหน้านี้"):
                 srv = authenticate_drive()
                 if srv:
-                    # 1. Prepare Folder
                     target_fid, folder_name = prepare_destination_folder(srv, st.session_state.order_val)
                     ts_str = datetime.now(THAI_TZ).strftime("%H%M%S")
                     
-                    # 2. Upload Photos (ชื่อไฟล์เป็น Order_PACKED)
                     for i, img_bytes in enumerate(st.session_state.photo_gallery):
                         fn = f"{st.session_state.order_val}_PACKED_{ts_str}_Img{i+1}.jpg"
                         upload_photo(srv, img_bytes, fn, target_fid)
                     
-                    # 3. Log ALL Items in Cart to Sheet
                     log_to_history(
-                        st.session_state.picked_cart,   # ส่งไปทั้งตะกร้า
+                        st.session_state.picked_cart,
                         st.session_state.order_val,
                         len(st.session_state.photo_gallery),
-                        st.session_state.user_id_raw,   # User ID
-                        st.session_state.user_name      # User Name
+                        st.session_state.user_id_raw,
+                        st.session_state.user_name
                     )
                     
                     st.balloons()
-                    st.success(f"✅ บันทึกสำเร็จ! ({len(st.session_state.picked_cart)} รายการ)")
+                    st.success(f"✅ บันทึกสำเร็จ! โดย: {st.session_state.user_name}")
                     time.sleep(2)
                     reset_all_data()
                     st.rerun()
 
 st.markdown("---")
-# ปุ่ม Reset ล่างสุด (เผื่ออยากเริ่มใหม่หมด)
 if st.button("🔄 ยกเลิกทั้งหมด (Reset)", type="secondary", use_container_width=True):
     reset_all_data()
     st.rerun()
+
