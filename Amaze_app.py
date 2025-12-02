@@ -1,66 +1,47 @@
 import streamlit as st
-from streamlit_back_camera_input import back_camera_input
 import pandas as pd
 import gspread
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from datetime import datetime
-import pytz 
 from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
 import time
 
-# --- 1. CONFIGURATION ---
+# --- IMPORT LIBRARY กล้องตัวพิเศษ (ช่วยเรื่องโฟกัส) ---
+# ถ้ายังไม่แก้ requirements.txt จะ error บรรทัดนี้
+try:
+    from streamlit_back_camera_input import back_camera_input
+except ImportError:
+    st.error("⚠️ กรุณาเพิ่ม 'streamlit-back-camera-input' ในไฟล์ requirements.txt")
+    st.stop()
+
+# --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 
-# --- 2. HELPER FUNCTIONS ---
-def read_barcode_from_image(img_file):
-    if img_file is None: return None
-    try:
-        image = Image.open(img_file)
-        decoded_objects = decode(image)
-        if decoded_objects:
-            return decoded_objects[0].data.decode("utf-8").strip()
-        return None
-    except Exception:
-        return None
-
+# --- HELPER & AUTH FUNCTIONS (คงเดิม) ---
 def get_credentials():
     try:
         if "oauth" in st.secrets:
             info = st.secrets["oauth"]
-            return Credentials(
-                None, refresh_token=info["refresh_token"],
+            creds = Credentials(
+                None,
+                refresh_token=info["refresh_token"],
                 token_uri="https://oauth2.googleapis.com/token",
-                client_id=info["client_id"], client_secret=info["client_secret"]
+                client_id=info["client_id"],
+                client_secret=info["client_secret"]
             )
+            return creds
+        else:
+            st.error("❌ ไม่พบข้อมูล [oauth] ใน Secrets")
+            return None
+    except Exception as e:
+        st.error(f"❌ Error Credentials: {e}")
         return None
-    except Exception:
-        return None
 
-def sync_input_state(key_name, val_name):
-    if key_name in st.session_state and st.session_state[key_name]:
-        st.session_state[val_name] = st.session_state[key_name]
-        st.toast(f"✅ รับข้อมูล: {st.session_state[key_name]}")
-        st.session_state[key_name] = ""
-
-# ฟังก์ชันสำหรับ Reset ค่าทั้งหมด (ต้องทำผ่าน Callback เพื่อป้องกัน Error)
-def reset_all_data():
-    st.session_state.order_val = ""
-    st.session_state.prod_val = ""
-    st.session_state.loc_val = ""
-    st.session_state.photo_gallery = []
-    st.session_state.cam_id += 1
-    
-    # ล้างค่าในช่องกรอก (ทำใน callback ได้ไม่ error)
-    if 'input_order' in st.session_state: st.session_state.input_order = ""
-    if 'input_prod' in st.session_state: st.session_state.input_prod = ""
-    if 'input_loc' in st.session_state: st.session_state.input_loc = ""
-
-# --- 3. GOOGLE SERVICES ---
 @st.cache_data(ttl=600)
 def load_sheet_data():
     try:
@@ -77,27 +58,9 @@ def load_sheet_data():
             except:
                 df['Barcode'] = df['Barcode'].astype(str)
         return df
-    except Exception:
-        return pd.DataFrame()
-
-def log_to_history(order_id, prod_code, loc_code, img_count):
-    try:
-        creds = get_credentials()
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_key(SHEET_ID)
-        try:
-            worksheet = sh.worksheet("History")
-        except:
-            worksheet = sh.add_worksheet(title="History", rows=1000, cols=10)
-            worksheet.append_row(["Timestamp (Thai)", "Order ID", "Product Barcode", "Location", "Images Count", "Status"])
-
-        tz_thai = pytz.timezone('Asia/Bangkok')
-        now_str = datetime.now(tz_thai).strftime("%Y-%m-%d %H:%M:%S")
-        worksheet.append_row([now_str, order_id, prod_code, loc_code, img_count, "Success"])
-        return True
     except Exception as e:
-        st.toast(f"⚠️ History Error: {e}", icon="⚠️")
-        return False
+        print(f"Sheet Error: {e}")
+        return pd.DataFrame()
 
 def authenticate_drive():
     try:
@@ -105,10 +68,12 @@ def authenticate_drive():
         if creds: return build('drive', 'v3', credentials=creds)
         return None
     except Exception as e:
-        st.toast(f"Error Drive: {e}", icon="❌")
+        st.error(f"Error Drive: {e}")
         return None
 
-def get_or_create_folder(service, folder_name, parent_id):
+def create_or_get_order_folder(service, order_id, parent_id):
+    date_prefix = datetime.now().strftime("%d-%m-%Y")
+    folder_name = f"{date_prefix}_{order_id}"
     query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     files = results.get('files', [])
@@ -119,210 +84,208 @@ def get_or_create_folder(service, folder_name, parent_id):
         return folder.get('id')
 
 def upload_photo(service, file_obj, filename, folder_id):
-    file_metadata = {'name': filename, 'parents': [folder_id]}
-    media = MediaIoBaseUpload(io.BytesIO(file_obj), mimetype='image/jpeg')
-    file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-    return file.get('id')
+    try:
+        file_metadata = {'name': filename, 'parents': [folder_id]}
+        media = MediaIoBaseUpload(io.BytesIO(file_obj), mimetype='image/jpeg')
+        file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        return file.get('id')
+    except Exception as e:
+        st.error(f"🔴 Upload Error: {e}")
+        raise e
 
-# --- 4. APP SETUP & CSS ---
-st.set_page_config(page_title="Smart Picking", page_icon="📱", layout="centered")
+# --- ฟังก์ชัน Reset (แก้ Error Session State) ---
+def reset_all_data():
+    st.session_state.order_val = ""
+    st.session_state.prod_val = ""
+    st.session_state.loc_val = ""
+    st.session_state.photo_gallery = []
+    st.session_state.cam_counter += 1
+    # ไม่ต้องลบ key widget โดยตรง ปล่อยให้ Rerun จัดการ
 
-# 🔥 CSS ปรับแต่ง Layout ให้เหมาะกับมือถือ
-st.markdown("""
-<style>
-    /* 1. ลดช่องว่างด้านบนสุด */
-    .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 2rem !important;
-    }
-    /* 2. ปรับหัวข้อให้เล็กลง */
-    h1 {
-        font-size: 1.5rem !important;
-        margin-bottom: 0px !important;
-    }
-    /* 3. พยายามบีบความสูงของกล้อง (อาจจะขึ้นอยู่กับ Browser ด้วย) */
-    iframe {
-        max-height: 220px !important;
-    }
-    /* ปรับแต่งตารางแสดงผล */
-    .info-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 8px 0;
-        border-bottom: 1px solid #f0f0f0;
-    }
-    .info-label { font-weight: bold; color: #555; }
-    .info-value { color: #000; font-weight: 500; }
-    .success-text { color: green; font-weight: bold; }
-    
-    /* ซ่อนปุ่มสลับกล้องถ้ามันเกะกะ (Optional) */
-    /* button[title="Switch camera"] { bottom: 10px !important; } */
-</style>
-""", unsafe_allow_html=True)
+# --- UI SETUP ---
+st.set_page_config(page_title="Smart Picking (Pro)", page_icon="📦")
 
-# Init State
 if 'order_val' not in st.session_state: st.session_state.order_val = ""
 if 'prod_val' not in st.session_state: st.session_state.prod_val = ""
 if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
-if 'input_order' not in st.session_state: st.session_state.input_order = ""
-if 'input_prod' not in st.session_state: st.session_state.input_prod = ""
-if 'input_loc' not in st.session_state: st.session_state.input_loc = ""
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
-if 'cam_id' not in st.session_state: st.session_state.cam_id = 0
+if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
 
+st.title("📦 ระบบเบิกสินค้า (Auto Focus)")
 df_items = load_sheet_data()
 
-# --- LOGIC ---
-current_step = 1
-step_title = "1. สแกน Order ID"
-target_loc_str = None
+# ==========================================
+# 1. ORDER ID
+# ==========================================
+st.markdown("#### 1. Order ID")
 
-if st.session_state.order_val:
-    current_step = 2
-    step_title = "2. สแกน Barcode สินค้า"
+# ถ้ายังไม่มีข้อมูล Order -> โชว์ช่องกรอกและกล้อง
+if not st.session_state.order_val:
+    col1, col2 = st.columns([3, 1])
     
-    if st.session_state.prod_val:
+    # ช่องกรอก Manual (ใส่ on_change ไม่ได้ใน logic นี้ ใช้เช็คค่าเอา)
+    manual_order = col1.text_input("พิมพ์ Order ID แล้วกด Enter", key="input_order_manual").strip().upper()
+    if manual_order:
+        st.session_state.order_val = manual_order
+        st.rerun()
+
+    # กล้อง (ใช้ back_camera_input เพื่อโฟกัส)
+    # ใส่ key ให้เปลี่ยนไปเรื่อยๆ เพื่อรีเซ็ตกล้อง
+    cam_key = f"cam_order_{st.session_state.cam_counter}"
+    scan_order = back_camera_input("แตะเพื่อเปิดกล้องสแกน Order", key=cam_key)
+    
+    if scan_order:
+        res = decode(Image.open(scan_order))
+        if res:
+            st.session_state.order_val = res[0].data.decode("utf-8").upper()
+            st.rerun()
+
+# ถ้ามีข้อมูล Order แล้ว -> โชว์ผลลัพธ์ และปุ่มแก้ไข (ซ่อนกล้อง)
+else:
+    st.success(f"📦 Order: **{st.session_state.order_val}**")
+    if st.button("✏️ แก้ไข Order"):
+        st.session_state.order_val = ""
+        st.rerun()
+
+# ==========================================
+# 2. PRODUCT SCAN (จะโชว์เมื่อมี Order แล้ว)
+# ==========================================
+if st.session_state.order_val:
+    st.markdown("---")
+    st.markdown("#### 2. Scan สินค้า")
+    
+    # ถ้ายังไม่มีสินค้า -> โชว์กล้อง
+    if not st.session_state.prod_val:
+        col1, col2 = st.columns([3, 1])
+        
+        # ช่องกรอก Manual
+        manual_prod = col1.text_input("พิมพ์ Barcode สินค้า แล้วกด Enter", key="input_prod_manual").strip()
+        if manual_prod:
+            st.session_state.prod_val = manual_prod
+            st.rerun()
+
+        # กล้อง
+        cam_key_prod = f"cam_prod_{st.session_state.cam_counter}"
+        scan_prod = back_camera_input("แตะเพื่อเปิดกล้องสแกนสินค้า", key=cam_key_prod)
+        
+        if scan_prod:
+            res_p = decode(Image.open(scan_prod))
+            if res_p:
+                st.session_state.prod_val = res_p[0].data.decode("utf-8")
+                st.rerun()
+                
+    # ถ้ามีสินค้าแล้ว -> โชว์รายละเอียด และไปขั้นตอนถัดไป
+    else:
+        # ตรวจสอบข้อมูลใน Sheet
+        target_loc_str = None
+        prod_found = False
+        
         if not df_items.empty:
             match = df_items[df_items['Barcode'] == st.session_state.prod_val]
             if not match.empty:
+                prod_found = True
                 row = match.iloc[0]
-                target_loc_str = f"{str(row.get('Zone', '')).strip()}-{str(row.get('Location', '')).strip()}"
+                zone_val = str(row.get('Zone', '')).strip()
+                loc_val = str(row.get('Location', '')).strip()
+                target_loc_str = f"{zone_val}-{loc_val}"
+                prod_name = row.get('Product Name (1 Variant Name1 ( Variant Name2 ( Quotation name', 'Unknown')
                 
-                if st.session_state.loc_val:
-                    if st.session_state.loc_val == target_loc_str or st.session_state.loc_val in target_loc_str:
-                         current_step = 4
-                         step_title = f"4. ถ่ายรูปแพ็ค ({len(st.session_state.photo_gallery)}/5)"
-                    else:
-                         current_step = 3
-                         step_title = "3. สแกน Location (ผิด❌)"
-                else:
-                    current_step = 3
-                    step_title = f"3. ยืนยัน Location"
+                st.info(f"✅ สินค้า: {prod_name}")
+                st.warning(f"📍 เป้าหมายเก็บ: **{target_loc_str}**")
             else:
-                st.toast("❌ ไม่พบข้อมูลสินค้า", icon="❌")
-
-# --- UI HEADER ---
-st.markdown("<h1>📱 Smart Picking</h1>", unsafe_allow_html=True) # ใช้ HTML แทน st.title เพื่อคุมขนาด
-
-# --- CAMERA SECTION ---
-# แสดงกล้องก่อนเสมอ เพื่อความสะดวกในการใช้งานมือเดียว
-show_cam = True
-if current_step == 4 and len(st.session_state.photo_gallery) >= 5:
-    show_cam = False
-    st.toast("✅ ครบ 5 รูปแล้ว กด Upload ได้เลย", icon="🎉")
-
-if show_cam:
-    st.info(f"👉 **{step_title}**")
-    # กล้องจะถูก CSS บีบความสูงลง
-    image_file = back_camera_input(key=f"cam_{st.session_state.cam_id}")
-    
-    if image_file:
-        if current_step < 4:
-            code = read_barcode_from_image(image_file)
-            if code:
-                code = code.upper()
-                if current_step == 1: st.session_state.order_val = code
-                elif current_step == 2: st.session_state.prod_val = code
-                elif current_step == 3: st.session_state.loc_val = code
-                
-                st.toast(f"✅ สแกน: {code}", icon="📸")
-                st.session_state.cam_id += 1
-                st.rerun()
-            else:
-                st.toast("⚠️ อ่านไม่เจอ ลองใหม่", icon="⚠️")
+                st.error(f"❌ ไม่พบ Barcode: {st.session_state.prod_val}")
         else:
-            st.session_state.photo_gallery.append(image_file.getvalue())
-            st.toast(f"📸 รูปที่ {len(st.session_state.photo_gallery)}", icon="✅")
-            st.session_state.cam_id += 1
+             st.warning("⚠️ กำลังโหลดฐานข้อมูลสินค้า...")
+
+        # ปุ่มสแกนใหม่
+        if st.button("✏️ สแกนสินค้าใหม่"):
+            st.session_state.prod_val = ""
+            st.session_state.loc_val = "" # ล้าง Location ด้วยถ้าเปลี่ยนสินค้า
             st.rerun()
 
-# --- DATA DISPLAY (2 Columns Layout) ---
+        # ==========================================
+        # 3. LOCATION VERIFY (โชว์เมื่อเจอสินค้าถูกต้อง)
+        # ==========================================
+        if prod_found and target_loc_str:
+            st.markdown("---")
+            st.markdown(f"#### 3. ยืนยัน Location")
+            
+            if not st.session_state.loc_val:
+                manual_loc = st.text_input("สแกน/พิมพ์ Location", key="input_loc_manual").strip().upper()
+                if manual_loc:
+                    st.session_state.loc_val = manual_loc
+                    st.rerun()
+                    
+                cam_key_loc = f"cam_loc_{st.session_state.cam_counter}"
+                scan_loc = back_camera_input("แตะเพื่อเปิดกล้องสแกน Location", key=cam_key_loc)
+                if scan_loc:
+                    res_l = decode(Image.open(scan_loc))
+                    if res_l:
+                        st.session_state.loc_val = res_l[0].data.decode("utf-8").upper()
+                        st.rerun()
+            else:
+                # ตรวจสอบความถูกต้อง
+                valid_loc = False
+                if st.session_state.loc_val == target_loc_str:
+                    st.success(f"✅ Location ถูกต้อง: {st.session_state.loc_val}")
+                    valid_loc = True
+                elif st.session_state.loc_val in target_loc_str:
+                    st.warning(f"⚠️ ใกล้เคียง: {st.session_state.loc_val} (ยอมรับได้)")
+                    valid_loc = True
+                else:
+                    st.error(f"❌ ผิดตำแหน่ง (คุณอยู่ที่: {st.session_state.loc_val})")
+                    if st.button("สแกน Location ใหม่"):
+                        st.session_state.loc_val = ""
+                        st.rerun()
+
+                # ==========================================
+                # 4. PACKING & UPLOAD
+                # ==========================================
+                if valid_loc:
+                    st.markdown("---")
+                    st.markdown(f"#### 4. ถ่ายรูปปิดกล่อง ({len(st.session_state.photo_gallery)}/5)")
+                    
+                    # Gallery
+                    if st.session_state.photo_gallery:
+                        cols = st.columns(5)
+                        for idx, img_data in enumerate(st.session_state.photo_gallery):
+                            with cols[idx]:
+                                st.image(img_data, caption=f"รูป {idx+1}", use_column_width=True)
+                                if st.button("🗑️", key=f"del_{idx}"):
+                                    st.session_state.photo_gallery.pop(idx)
+                                    st.rerun()
+                    
+                    # กล้องถ่ายรูป (ใช้ Camera ธรรมดาได้เพราะถ่ายภาพรวม ไม่ต้องมาโคร)
+                    # หรือจะใช้ back_camera ก็ได้ถ้าอยากได้ชัดๆ
+                    if len(st.session_state.photo_gallery) < 5:
+                        pack_img = st.camera_input("ถ่ายรูปสินค้า", key=f"cam_pack_{st.session_state.cam_counter}")
+                        if pack_img:
+                            st.session_state.photo_gallery.append(pack_img.getvalue())
+                            st.session_state.cam_counter += 1
+                            st.rerun()
+
+                    # ปุ่ม Upload
+                    if len(st.session_state.photo_gallery) > 0:
+                        st.markdown("---")
+                        if st.button(f"☁️ Upload {len(st.session_state.photo_gallery)} รูป", type="primary", use_container_width=True):
+                            with st.spinner("กำลังอัปโหลด..."):
+                                srv = authenticate_drive()
+                                if srv:
+                                    fid = create_or_get_order_folder(srv, st.session_state.order_val, MAIN_FOLDER_ID)
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    
+                                    for i, img_bytes in enumerate(st.session_state.photo_gallery):
+                                        fn = f"{st.session_state.order_val}_{st.session_state.prod_val}_LOC-{st.session_state.loc_val}_{ts}_Img{i+1}.jpg"
+                                        upload_photo(srv, img_bytes, fn, fid)
+                                    
+                                    st.balloons()
+                                    st.success("บันทึกสำเร็จ!")
+                                    time.sleep(2)
+                                    reset_all_data()
+                                    st.rerun()
+
+# ปุ่ม Reset ล่างสุด
 st.markdown("---")
-
-# ฟังก์ชันช่วยแสดงผลแบบ 2 คอลัมน์
-def show_row(label, value, is_active=False):
-    c1, c2 = st.columns([1.5, 3])
-    with c1:
-        st.markdown(f"**{label}**")
-    with c2:
-        if value:
-            st.markdown(f"**{value}**") # ตัวหนา
-        else:
-            st.markdown("-")
-
-# แสดงรายการ
-show_row("📦 Order:", st.session_state.order_val)
-show_row("🛒 Product:", st.session_state.prod_val)
-
-# Location มี Logic สีเขียว/แดง
-loc_display = "-"
-if target_loc_str:
-    loc_display = f"เป้าหมาย: {target_loc_str}"
-if st.session_state.loc_val:
-    if current_step == 3: # ผิด
-         loc_display = f"❌ {st.session_state.loc_val} (เป้า: {target_loc_str})"
-    else: # ถูก
-         loc_display = f"✅ {target_loc_str}"
-show_row("📍 Location:", loc_display)
-
-
-# --- UPLOAD SECTION ---
-if current_step == 4:
-    if st.session_state.photo_gallery:
-        st.write(f"รูปภาพ ({len(st.session_state.photo_gallery)}/5):")
-        # แสดงรูปเล็กๆ เรียงกัน
-        cols = st.columns(5)
-        for i, img in enumerate(st.session_state.photo_gallery):
-            with cols[i]:
-                st.image(img, use_column_width=True)
-                if st.button("ลบ", key=f"del_{i}"):
-                    st.session_state.photo_gallery.pop(i)
-                    st.rerun()
-        
-        # ปุ่ม Upload (กดแล้วซ่อน)
-        upload_placeholder = st.empty()
-        if upload_placeholder.button(f"☁️ Upload ข้อมูล", type="primary"):
-             upload_placeholder.empty() # ซ่อนปุ่ม
-             status_msg = st.info("🚀 กำลังอัปโหลด... ห้ามปิดหน้าจอ")
-             
-             with st.spinner("Processing..."):
-                srv = authenticate_drive()
-                if srv:
-                    # Drive
-                    tz_thai = pytz.timezone('Asia/Bangkok')
-                    now_thai = datetime.now(tz_thai)
-                    date_str = now_thai.strftime("%d-%m-%Y")
-                    time_str = now_thai.strftime("%H_%M")
-                    
-                    date_folder_id = get_or_create_folder(srv, date_str, MAIN_FOLDER_ID)
-                    sub_folder_name = f"{st.session_state.order_val}-{time_str}"
-                    final_folder_id = get_or_create_folder(srv, sub_folder_name, date_folder_id)
-
-                    for i, b in enumerate(st.session_state.photo_gallery):
-                        fn = f"{sub_folder_name}_Img{i+1}.jpg"
-                        upload_photo(srv, b, fn, final_folder_id)
-
-                    # Sheet
-                    log_to_history(st.session_state.order_val, st.session_state.prod_val, st.session_state.loc_val, len(st.session_state.photo_gallery))
-                    
-                    status_msg.empty()
-                    st.balloons()
-                    st.toast("✅ บันทึกสำเร็จ!", icon="🎉")
-                    time.sleep(2)
-                    
-                    # Reset ผ่านฟังก์ชัน reset_all_data โดยตรง (ไม่ต้องผ่าน callback เพราะอยู่นอกปุ่ม reset)
-                    reset_all_data()
-                    st.rerun()
-
-# --- MANUAL INPUT (Compact) ---
-with st.expander("⌨️ กรอกเอง / เริ่มใหม่"):
-    c1, c2 = st.columns(2)
-    with c1:
-        st.text_input("Order", key="input_order", on_change=sync_input_state, args=("input_order", "order_val"))
-    with c2:
-        st.text_input("Product", key="input_prod", on_change=sync_input_state, args=("input_prod", "prod_val"))
-    
-    st.text_input("Location", key="input_loc", on_change=sync_input_state, args=("input_loc", "loc_val"))
-        
-    # แก้ไขปุ่ม Reset ให้เรียกใช้ Callback function
-    st.button("🔄 Reset ทั้งหมด", use_container_width=True, on_click=reset_all_data)
+if st.button("🔄 เริ่มใหม่ทั้งหมด", type="secondary", use_container_width=True):
+    reset_all_data()
+    st.rerun()
