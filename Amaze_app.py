@@ -119,7 +119,7 @@ st.markdown("""
 <style>
     /* 1. ลดช่องว่างด้านบนสุด */
     .block-container {
-        padding-top: 1rem !important;
+        padding-top: 2rem !important;
         padding-bottom: 2rem !important;
     }
     /* 2. ปรับหัวข้อให้เล็กลง */
@@ -129,7 +129,7 @@ st.markdown("""
     }
     /* 3. พยายามบีบความสูงของกล้อง (อาจจะขึ้นอยู่กับ Browser ด้วย) */
     iframe {
-        max-height: 250px !important;
+        max-height: 220px !important;
     }
     /* ปรับแต่งตารางแสดงผล */
     .info-row {
@@ -328,3 +328,4 @@ with st.expander("⌨️ กรอกเอง / เริ่มใหม่"):
         st.session_state.photo_gallery = []
         st.session_state.cam_id += 1
         st.rerun()
+
