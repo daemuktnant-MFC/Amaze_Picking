@@ -9,7 +9,7 @@ from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
 import time
-import pytz  # <--- เพิ่ม Library จัดการ Timezone
+import pytz 
 
 # --- IMPORT LIBRARY กล้อง ---
 try:
@@ -23,7 +23,7 @@ MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 LOG_SHEET_NAME = 'Logs'
 USER_SHEET_NAME = 'User'
-THAI_TZ = pytz.timezone('Asia/Bangkok') # <--- กำหนด Timezone ไทย
+THAI_TZ = pytz.timezone('Asia/Bangkok')
 
 # --- HELPER: GET THAI TIME ---
 def get_thai_time():
@@ -87,7 +87,8 @@ def load_sheet_data(sheet_name=0):
         print(f"Sheet Error ({sheet_name}): {e}")
         return pd.DataFrame()
 
-def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_qty, file_id):
+# --- [EDIT 1] เพิ่ม parameter user_id และแก้ Column H ---
+def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_qty, user_id, file_id):
     try:
         creds = get_credentials()
         gc = gspread.authorize(creds)
@@ -97,19 +98,17 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
             worksheet = sh.worksheet(LOG_SHEET_NAME)
         except:
             worksheet = sh.add_worksheet(title=LOG_SHEET_NAME, rows="1000", cols="20")
-            # Header
+            # Header - เปลี่ยน Reserved เป็น User
             worksheet.append_row([
                 "Timestamp", "Picker Name", "Order ID", "Barcode", "Product Name", "Location", 
-                "Pick Qty", "Reserved", "Image Link (Col I)"
+                "Pick Qty", "User", "Image Link (Col I)"
             ])
             
-        # แก้ไข: ใช้เวลาไทย
         timestamp = get_thai_time().strftime("%Y-%m-%d %H:%M:%S")
         
-        # สร้าง Link รูปภาพ
         image_link = f"https://drive.google.com/open?id={file_id}"
         
-        # จัดเรียงข้อมูลลง Column A ถึง I (9 ช่อง)
+        # จัดเรียงข้อมูล - ใส่ user_id ลงในช่องที่ 8 (Column H)
         row_data = [
             timestamp, 
             picker_name, 
@@ -118,7 +117,7 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
             prod_name, 
             location, 
             pick_qty, 
-            "",       
+            str(user_id), # Col H (User Login ID)
             image_link 
         ]
         
@@ -131,11 +130,9 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
 # 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED)
 # ==============================================================================
 def get_target_folder_structure(service, order_id, main_parent_id):
-    # แก้ไข: ใช้เวลาไทยสำหรับชื่อ Folder วันที่
     now_th = get_thai_time()
     date_folder_name = now_th.strftime("%d-%m-%Y")
     
-    # ค้นหาว่ามี Folder วันนี้หรือยัง
     q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res_date = service.files().list(q=q_date, fields="files(id)").execute()
     files_date = res_date.get('files', [])
@@ -143,7 +140,6 @@ def get_target_folder_structure(service, order_id, main_parent_id):
     if files_date:
         date_folder_id = files_date[0]['id']
     else:
-        # สร้างใหม่ถ้ายังไม่มี
         meta_date = {
             'name': date_folder_name,
             'parents': [main_parent_id],
@@ -152,7 +148,6 @@ def get_target_folder_structure(service, order_id, main_parent_id):
         date_folder = service.files().create(body=meta_date, fields='id').execute()
         date_folder_id = date_folder.get('id')
         
-    # 2. จัดการ Folder Order_HH-MM (ข้างใน Folder วันที่) - แก้ไข: ใช้เวลาไทย
     time_suffix = now_th.strftime("%H-%M")
     order_folder_name = f"{order_id}_{time_suffix}"
     
@@ -170,20 +165,15 @@ def get_target_folder_structure(service, order_id, main_parent_id):
 
 def upload_photo(service, file_bytes, filename, folder_id):
     try:
-        # --- FIX: แปลง Image เป็น RGB เพื่อแก้ปัญหา OSError ---
-        # 1. เปิดไฟล์ด้วย PIL
         img_pil = Image.open(io.BytesIO(file_bytes))
         
-        # 2. แปลงโหมดสี ถ้าเป็น RGBA หรือ Palette ให้เป็น RGB
         if img_pil.mode in ("RGBA", "P"):
             img_pil = img_pil.convert("RGB")
             
-        # 3. บันทึกลง Buffer ใหม่ในรูปแบบ JPEG
         buf = io.BytesIO()
         img_pil.save(buf, format='JPEG')
-        buf.seek(0) # รีเซ็ต pointer ไปที่จุดเริ่มต้นของไฟล์
+        buf.seek(0)
         
-        # 4. อัปโหลดจาก Buffer ใหม่ที่ Clean แล้ว
         file_metadata = {'name': filename, 'parents': [folder_id]}
         media = MediaIoBaseUpload(buf, mimetype='image/jpeg')
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
@@ -195,7 +185,6 @@ def upload_photo(service, file_bytes, filename, folder_id):
 
 # --- RESET FUNCTIONS ---
 def reset_for_next_item():
-    """รีเซ็ตเฉพาะส่วนสินค้า เพื่อให้สแกนชิ้นต่อไปใน Order เดิมได้เลย"""
     st.session_state.prod_val = ""
     st.session_state.loc_val = ""
     st.session_state.prod_display_name = ""
@@ -204,7 +193,6 @@ def reset_for_next_item():
     st.session_state.cam_counter += 1
 
 def reset_all_data():
-    """รีเซ็ตทั้งหมดเพื่อเริ่ม Order ใหม่"""
     st.session_state.order_val = ""
     reset_for_next_item()
 
@@ -414,16 +402,15 @@ else:
                                     if srv:
                                         target_fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
                                         
-                                        # แก้ไข: ใช้เวลาไทยสำหรับชื่อไฟล์
                                         ts = get_thai_time().strftime("%Y%m%d_%H%M%S")
                                         first_file_id = "" 
                                         
                                         for i, img_bytes in enumerate(st.session_state.photo_gallery):
                                             fn = f"{st.session_state.order_val}_{st.session_state.prod_val}_LOC-{st.session_state.loc_val}_{ts}_Img{i+1}.jpg"
-                                            # เรียกฟังก์ชันที่แก้แล้ว (มี convert RGB ภายใน)
                                             upl_id = upload_photo(srv, img_bytes, fn, target_fid)
                                             if i == 0: first_file_id = upl_id 
                                         
+                                        # [EDIT 2] ส่ง current_user_id ไปบันทึกด้วย
                                         save_log_to_sheet(
                                             st.session_state.current_user_name,
                                             st.session_state.order_val,
@@ -431,6 +418,7 @@ else:
                                             st.session_state.prod_display_name,
                                             st.session_state.loc_val,
                                             st.session_state.pick_qty, 
+                                            st.session_state.current_user_id, # <-- ส่ง ID
                                             first_file_id
                                         )
                                         
