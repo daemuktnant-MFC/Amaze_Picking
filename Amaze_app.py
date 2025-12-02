@@ -41,14 +41,10 @@ def get_credentials():
     except Exception:
         return None
 
-# ฟังก์ชันจัดการ Input: รับค่าเสร็จแล้วล้างช่องทิ้งทันที
 def sync_input_state(key_name, val_name):
     if key_name in st.session_state and st.session_state[key_name]:
-        # 1. ส่งค่าไปเก็บในตัวแปรหลัก
         st.session_state[val_name] = st.session_state[key_name]
-        # 2. แจ้งเตือนแบบลอย (Toast) ว่ารับค่าแล้ว
         st.toast(f"✅ รับข้อมูล: {st.session_state[key_name]}")
-        # 3. ล้างค่าในช่องกรอกให้ว่าง
         st.session_state[key_name] = ""
 
 # --- 3. GOOGLE SERVICES ---
@@ -87,7 +83,7 @@ def log_to_history(order_id, prod_code, loc_code, img_count):
         worksheet.append_row([now_str, order_id, prod_code, loc_code, img_count, "Success"])
         return True
     except Exception as e:
-        st.toast(f"⚠️ บันทึก History ไม่สำเร็จ: {e}", icon="⚠️") # Toast Error
+        st.toast(f"⚠️ History Error: {e}", icon="⚠️")
         return False
 
 def authenticate_drive():
@@ -96,7 +92,7 @@ def authenticate_drive():
         if creds: return build('drive', 'v3', credentials=creds)
         return None
     except Exception as e:
-        st.toast(f"Error Drive: {e}", icon="❌") # Toast Error
+        st.toast(f"Error Drive: {e}", icon="❌")
         return None
 
 def get_or_create_folder(service, folder_name, parent_id):
@@ -115,14 +111,39 @@ def upload_photo(service, file_obj, filename, folder_id):
     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
     return file.get('id')
 
-# --- 4. APP SETUP ---
-st.set_page_config(page_title="Mobile Picking", page_icon="📱", layout="centered")
+# --- 4. APP SETUP & CSS ---
+st.set_page_config(page_title="Smart Picking", page_icon="📱", layout="centered")
 
-# CSS: ปรับให้ Toast มองเห็นชัดขึ้น
+# 🔥 CSS ปรับแต่ง Layout ให้เหมาะกับมือถือ
 st.markdown("""
 <style>
-    .stButton button { width: 100%; height: 3.5rem; font-size: 1.2rem; }
-    .camera-hint { font-size: 0.8rem; color: #666; text-align: center; margin-bottom: 5px; }
+    /* 1. ลดช่องว่างด้านบนสุด */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 2rem !important;
+    }
+    /* 2. ปรับหัวข้อให้เล็กลง */
+    h1 {
+        font-size: 1.5rem !important;
+        margin-bottom: 0px !important;
+    }
+    /* 3. พยายามบีบความสูงของกล้อง (อาจจะขึ้นอยู่กับ Browser ด้วย) */
+    iframe {
+        max-height: 250px !important;
+    }
+    /* ปรับแต่งตารางแสดงผล */
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .info-label { font-weight: bold; color: #555; }
+    .info-value { color: #000; font-weight: 500; }
+    .success-text { color: green; font-weight: bold; }
+    
+    /* ซ่อนปุ่มสลับกล้องถ้ามันเกะกะ (Optional) */
+    /* button[title="Switch camera"] { bottom: 10px !important; } */
 </style>
 """, unsafe_allow_html=True)
 
@@ -163,91 +184,98 @@ if st.session_state.order_val:
                          step_title = "3. สแกน Location (ผิด❌)"
                 else:
                     current_step = 3
-                    step_title = f"3. ยืนยัน Location: {target_loc_str}"
+                    step_title = f"3. ยืนยัน Location"
             else:
-                st.toast("❌ ไม่พบข้อมูลสินค้าในระบบ", icon="❌") # Toast Error
+                st.toast("❌ ไม่พบข้อมูลสินค้า", icon="❌")
 
-# --- UI ---
-st.title("📱 Smart Picking")
+# --- UI HEADER ---
+st.markdown("<h1>📱 Smart Picking</h1>", unsafe_allow_html=True) # ใช้ HTML แทน st.title เพื่อคุมขนาด
 
-with st.container():
-    st.info(f"👉 ขั้นตอน: **{step_title}**")
+# --- CAMERA SECTION ---
+# แสดงกล้องก่อนเสมอ เพื่อความสะดวกในการใช้งานมือเดียว
+show_cam = True
+if current_step == 4 and len(st.session_state.photo_gallery) >= 5:
+    show_cam = False
+    st.toast("✅ ครบ 5 รูปแล้ว กด Upload ได้เลย", icon="🎉")
+
+if show_cam:
+    st.info(f"👉 **{step_title}**")
+    # กล้องจะถูก CSS บีบความสูงลง
+    image_file = back_camera_input(key=f"cam_{st.session_state.cam_id}")
     
-    # ส่วนกล้อง
-    show_cam = True
-    if current_step == 4 and len(st.session_state.photo_gallery) >= 5:
-        show_cam = False
-        st.toast("✅ ครบ 5 รูปแล้ว กด Upload ได้เลย", icon="🎉")
-
-    if show_cam:
-        image_file = back_camera_input(key=f"cam_{st.session_state.cam_id}")
-        
-        if image_file:
-            if current_step < 4:
-                code = read_barcode_from_image(image_file)
-                if code:
-                    code = code.upper()
-                    if current_step == 1:
-                        st.session_state.order_val = code
-                    elif current_step == 2:
-                        st.session_state.prod_val = code
-                    elif current_step == 3:
-                        st.session_state.loc_val = code
-                    
-                    st.toast(f"✅ สแกนสำเร็จ: {code}", icon="📸")
-                    st.session_state.cam_id += 1
-                    st.rerun()
-                else:
-                    st.toast("⚠️ อ่าน Barcode ไม่ได้ ลองขยับกล้อง", icon="⚠️")
-            else:
-                st.session_state.photo_gallery.append(image_file.getvalue())
-                st.toast(f"📸 บันทึกรูปที่ {len(st.session_state.photo_gallery)}", icon="✅")
+    if image_file:
+        if current_step < 4:
+            code = read_barcode_from_image(image_file)
+            if code:
+                code = code.upper()
+                if current_step == 1: st.session_state.order_val = code
+                elif current_step == 2: st.session_state.prod_val = code
+                elif current_step == 3: st.session_state.loc_val = code
+                
+                st.toast(f"✅ สแกน: {code}", icon="📸")
                 st.session_state.cam_id += 1
                 st.rerun()
+            else:
+                st.toast("⚠️ อ่านไม่เจอ ลองใหม่", icon="⚠️")
+        else:
+            st.session_state.photo_gallery.append(image_file.getvalue())
+            st.toast(f"📸 รูปที่ {len(st.session_state.photo_gallery)}", icon="✅")
+            st.session_state.cam_id += 1
+            st.rerun()
 
-# --- DASHBOARD ---
+# --- DATA DISPLAY (2 Columns Layout) ---
 st.markdown("---")
-c1, c2, c3 = st.columns(3)
-c1.metric("Order", st.session_state.order_val if st.session_state.order_val else "-")
-c2.metric("Product", "✅" if st.session_state.prod_val else "-")
-c3.metric("Location", "✅" if current_step == 4 else "-")
 
-if target_loc_str and current_step >= 3:
-    if current_step == 3 and st.session_state.loc_val:
-        st.toast(f"❌ ผิดตำแหน่ง! (Scan: {st.session_state.loc_val})", icon="🚫")
-        st.error(f"❌ ผิดตำแหน่ง (คุณอยู่ที่: {st.session_state.loc_val})") # ยังคงโชว์ Error ตัวใหญ่ไว้นิดนึงเผื่อพลาด
-    elif current_step == 3:
-        st.info(f"📍 เป้าหมาย: **{target_loc_str}**")
+# ฟังก์ชันช่วยแสดงผลแบบ 2 คอลัมน์
+def show_row(label, value, is_active=False):
+    c1, c2 = st.columns([1.5, 3])
+    with c1:
+        st.markdown(f"**{label}**")
+    with c2:
+        if value:
+            st.markdown(f"**{value}**") # ตัวหนา
+        else:
+            st.markdown("-")
 
-# --- UPLOAD SECTION (แก้ไข: ซ่อนปุ่มเมื่อกด) ---
+# แสดงรายการ
+show_row("📦 Order:", st.session_state.order_val)
+show_row("🛒 Product:", st.session_state.prod_val)
+
+# Location มี Logic สีเขียว/แดง
+loc_display = "-"
+if target_loc_str:
+    loc_display = f"เป้าหมาย: {target_loc_str}"
+if st.session_state.loc_val:
+    if current_step == 3: # ผิด
+         loc_display = f"❌ {st.session_state.loc_val} (เป้า: {target_loc_str})"
+    else: # ถูก
+         loc_display = f"✅ {target_loc_str}"
+show_row("📍 Location:", loc_display)
+
+
+# --- UPLOAD SECTION ---
 if current_step == 4:
     if st.session_state.photo_gallery:
-        st.write("รูปที่ถ่ายแล้ว:")
-        g_cols = st.columns(5)
+        st.write(f"รูปภาพ ({len(st.session_state.photo_gallery)}/5):")
+        # แสดงรูปเล็กๆ เรียงกัน
+        cols = st.columns(5)
         for i, img in enumerate(st.session_state.photo_gallery):
-            with g_cols[i]:
+            with cols[i]:
                 st.image(img, use_column_width=True)
                 if st.button("ลบ", key=f"del_{i}"):
                     st.session_state.photo_gallery.pop(i)
                     st.rerun()
-    
-    if st.session_state.photo_gallery:
-        # [NEW] สร้าง Placeholder เพื่อจัดการปุ่ม
-        upload_placeholder = st.empty()
         
-        # ถ้ากดปุ่ม (ปุ่มจะอยู่ใน Placeholder)
-        if upload_placeholder.button(f"☁️ Upload {len(st.session_state.photo_gallery)} รูป", type="primary"):
-             # 1. ซ่อนปุ่มทันที! ป้องกันกดซ้ำ
-             upload_placeholder.empty()
+        # ปุ่ม Upload (กดแล้วซ่อน)
+        upload_placeholder = st.empty()
+        if upload_placeholder.button(f"☁️ Upload ข้อมูล", type="primary"):
+             upload_placeholder.empty() # ซ่อนปุ่ม
+             status_msg = st.info("🚀 กำลังอัปโหลด... ห้ามปิดหน้าจอ")
              
-             # 2. แสดงสถานะกำลังทำงาน
-             status_msg = st.info("🚀 กำลังอัปโหลดข้อมูล กรุณารอสักครู่...")
-             st.toast("กำลังเชื่อมต่อ Google Drive...", icon="⏳")
-
-             with st.spinner("Uploading..."):
+             with st.spinner("Processing..."):
                 srv = authenticate_drive()
                 if srv:
-                    # Drive Logic
+                    # Drive
                     tz_thai = pytz.timezone('Asia/Bangkok')
                     now_thai = datetime.now(tz_thai)
                     date_str = now_thai.strftime("%d-%m-%Y")
@@ -261,19 +289,12 @@ if current_step == 4:
                         fn = f"{sub_folder_name}_Img{i+1}.jpg"
                         upload_photo(srv, b, fn, final_folder_id)
 
-                    # Sheet Logic
-                    log_success = log_to_history(
-                        st.session_state.order_val, 
-                        st.session_state.prod_val, 
-                        st.session_state.loc_val, 
-                        len(st.session_state.photo_gallery)
-                    )
+                    # Sheet
+                    log_to_history(st.session_state.order_val, st.session_state.prod_val, st.session_state.loc_val, len(st.session_state.photo_gallery))
                     
-                    # สำเร็จ!
-                    status_msg.empty() # ลบข้อความกำลังโหลด
+                    status_msg.empty()
                     st.balloons()
-                    st.toast(f"✅ บันทึกสำเร็จ! ({sub_folder_name})", icon="🎉")
-                    
+                    st.toast("✅ บันทึกสำเร็จ!", icon="🎉")
                     time.sleep(2)
                     
                     # Reset
@@ -287,19 +308,17 @@ if current_step == 4:
                     st.session_state.cam_id += 1
                     st.rerun()
 
-# --- MANUAL INPUT (แก้ไข: Auto Clear) ---
-with st.expander("📝 กรอกเอง / Upload รูป"):
-    st.markdown("---")
-    # ใช้ on_change=sync_input_state เพื่อรับค่าและล้างช่องทันที
-    st.text_input("พิมพ์ Order ID", key="input_order", on_change=sync_input_state, args=("input_order", "order_val"))
+# --- MANUAL INPUT (Compact) ---
+with st.expander("⌨️ กรอกเอง / เริ่มใหม่"):
+    c1, c2 = st.columns(2)
+    with c1:
+        st.text_input("Order", key="input_order", on_change=sync_input_state, args=("input_order", "order_val"))
+    with c2:
+        st.text_input("Product", key="input_prod", on_change=sync_input_state, args=("input_prod", "prod_val"))
     
-    if st.session_state.order_val:
-        st.text_input("พิมพ์ Product Barcode", key="input_prod", on_change=sync_input_state, args=("input_prod", "prod_val"))
-    
-    if st.session_state.prod_val:
-        st.text_input("พิมพ์ Location", key="input_loc", on_change=sync_input_state, args=("input_loc", "loc_val"))
+    st.text_input("Location", key="input_loc", on_change=sync_input_state, args=("input_loc", "loc_val"))
         
-    if st.button("Reset / เริ่มใหม่"):
+    if st.button("🔄 Reset ทั้งหมด", use_container_width=True):
         st.session_state.order_val = ""
         st.session_state.prod_val = ""
         st.session_state.loc_val = ""
