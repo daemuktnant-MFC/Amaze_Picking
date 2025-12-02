@@ -21,7 +21,7 @@ except ImportError:
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 LOG_SHEET_NAME = 'Logs'
-USER_SHEET_NAME = 'User' # ชื่อ Sheet ที่เก็บข้อมูลพนักงาน
+USER_SHEET_NAME = 'User'
 
 # --- AUTHENTICATION ---
 def get_credentials():
@@ -45,14 +45,13 @@ def get_credentials():
 
 # --- GOOGLE SERVICES ---
 @st.cache_data(ttl=600)
-def load_sheet_data(sheet_name=0): # แก้ให้รับชื่อ Sheet ได้
+def load_sheet_data(sheet_name=0):
     try:
         creds = get_credentials()
         if not creds: return pd.DataFrame()
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(SHEET_ID)
         
-        # ถ้าส่งมาเป็นตัวเลข (0) ให้เปิดตาม index, ถ้าเป็นชื่อให้เปิดตามชื่อ
         if isinstance(sheet_name, int):
             worksheet = sh.get_worksheet(sheet_name)
         else:
@@ -64,8 +63,7 @@ def load_sheet_data(sheet_name=0): # แก้ให้รับชื่อ She
             data = rows[1:]
             df = pd.DataFrame(data, columns=headers)
             
-            # ล้างข้อมูล Barcode/User ID ให้เป็น Text
-            # (Loop หา Column ที่น่าจะเป็น ID แล้วแปลงเป็น String)
+            # Clean Data
             for col in df.columns:
                 if 'Barcode' in col or 'ID' in col: 
                     df[col] = df[col].astype(str).str.replace(r'\.0$', '', regex=True)
@@ -75,8 +73,45 @@ def load_sheet_data(sheet_name=0): # แก้ให้รับชื่อ She
         print(f"Sheet Error ({sheet_name}): {e}")
         return pd.DataFrame()
 
-# ฟังก์ชันบันทึก Log (เพิ่ม picker_name)
-def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, file_id):
+# --- FOLDER MANAGEMENT ---
+def create_folder_structure(service, order_id, parent_id):
+    # 1. Folder Date (DD-MM-YYYY)
+    date_folder_name = datetime.now().strftime("%d-%m-%Y")
+    query_date = f"name = '{date_folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    results = service.files().list(q=query_date, fields="files(id)").execute()
+    files = results.get('files', [])
+    
+    if files:
+        date_folder_id = files[0]['id']
+    else:
+        file_metadata = {'name': date_folder_name, 'parents': [parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
+        folder = service.files().create(body=file_metadata, fields='id').execute()
+        date_folder_id = folder.get('id')
+
+    # 2. Folder Order (Order_HH-MM)
+    time_suffix = datetime.now().strftime("%H-%M")
+    sub_folder_name = f"{order_id}_{time_suffix}"
+    
+    file_metadata_sub = {
+        'name': sub_folder_name, 
+        'parents': [date_folder_id], 
+        'mimeType': 'application/vnd.google-apps.folder'
+    }
+    sub_folder = service.files().create(body=file_metadata_sub, fields='id, webViewLink').execute()
+    
+    return sub_folder.get('id'), sub_folder.get('webViewLink')
+
+def upload_photo(service, file_obj, filename, folder_id):
+    try:
+        file_metadata = {'name': filename, 'parents': [folder_id]}
+        media = MediaIoBaseUpload(io.BytesIO(file_obj), mimetype='image/jpeg')
+        service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    except Exception as e:
+        st.error(f"🔴 Upload Error: {e}")
+        raise e
+
+# --- LOGGING (แก้ไขบันทึก Pick Qty จริง) ---
+def save_log_to_sheet(timestamp, order_id, barcode, prod_name, location, actual_qty, user_id, user_name, folder_link):
     try:
         creds = get_credentials()
         gc = gspread.authorize(creds)
@@ -86,55 +121,34 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, file_
             worksheet = sh.worksheet(LOG_SHEET_NAME)
         except:
             worksheet = sh.add_worksheet(title=LOG_SHEET_NAME, rows="1000", cols="10")
-            # เพิ่ม Header "Picker Name"
-            worksheet.append_row(["Timestamp", "Picker Name", "Order ID", "Barcode", "Product Name", "Location", "Image ID"])
+            worksheet.append_row(["Timestamp", "Order ID", "Barcode", "Product Name", "Location", "Pick Qty", "User ID", "Name", "Images File"])
             
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # บันทึกชื่อคนหยิบลงไปด้วย
-        worksheet.append_row([timestamp, picker_name, order_id, barcode, prod_name, location, file_id])
-        print("Log saved.")
+        row_data = [
+            timestamp,      # A
+            order_id,       # B
+            barcode,        # C
+            prod_name,      # D
+            location,       # E
+            str(actual_qty),# F (บันทึกค่าจริงที่กรอก)
+            user_id,        # G
+            user_name,      # H
+            folder_link     # I
+        ]
+        
+        worksheet.append_row(row_data)
+        print("Log saved successfully.")
     except Exception as e:
         st.warning(f"⚠️ บันทึก Log ไม่สำเร็จ: {e}")
-
-def authenticate_drive():
-    try:
-        creds = get_credentials()
-        if creds: return build('drive', 'v3', credentials=creds)
-        return None
-    except Exception as e:
-        st.error(f"Error Drive: {e}")
-        return None
-
-def create_or_get_order_folder(service, order_id, parent_id):
-    date_prefix = datetime.now().strftime("%d-%m-%Y")
-    folder_name = f"{date_prefix}_{order_id}"
-    query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    files = results.get('files', [])
-    if files: return files[0]['id']
-    else:
-        file_metadata = {'name': folder_name, 'parents': [parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
-        folder = service.files().create(body=file_metadata, fields='id').execute()
-        return folder.get('id')
-
-def upload_photo(service, file_obj, filename, folder_id):
-    try:
-        file_metadata = {'name': filename, 'parents': [folder_id]}
-        media = MediaIoBaseUpload(io.BytesIO(file_obj), mimetype='image/jpeg')
-        file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-        return file.get('id')
-    except Exception as e:
-        st.error(f"🔴 Upload Error: {e}")
-        raise e
 
 def reset_all_data():
     st.session_state.order_val = ""
     st.session_state.prod_val = ""
     st.session_state.loc_val = ""
     st.session_state.prod_display_name = ""
+    st.session_state.master_qty = 0    # Reset ค่า Target
+    st.session_state.actual_qty = 0    # Reset ค่าจริง
     st.session_state.photo_gallery = []
     st.session_state.cam_counter += 1
-    # หมายเหตุ: เราจะไม่ Reset User Name เพื่อให้เขาทำงานต่อได้เลย
 
 def logout_user():
     st.session_state.current_user_name = ""
@@ -143,7 +157,7 @@ def logout_user():
     st.rerun()
 
 # --- UI SETUP ---
-st.set_page_config(page_title="Smart Picking (User Login)", page_icon="📦")
+st.set_page_config(page_title="Smart Picking (Edit Qty)", page_icon="📦")
 
 # Init Session State
 if 'current_user_name' not in st.session_state: st.session_state.current_user_name = ""
@@ -152,15 +166,14 @@ if 'order_val' not in st.session_state: st.session_state.order_val = ""
 if 'prod_val' not in st.session_state: st.session_state.prod_val = ""
 if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
 if 'prod_display_name' not in st.session_state: st.session_state.prod_display_name = ""
+if 'master_qty' not in st.session_state: st.session_state.master_qty = 0 # จำนวนจากระบบ
+if 'actual_qty' not in st.session_state: st.session_state.actual_qty = 0 # จำนวนหยิบจริง
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
 
-# --- PART 1: USER LOGIN SECTION ---
+# --- PART 1: LOGIN ---
 if not st.session_state.current_user_name:
     st.title("🔐 Login พนักงาน")
-    st.info(f"กรุณาสแกนรหัสพนักงาน (ข้อมูลจาก Sheet: {USER_SHEET_NAME})")
-    
-    # โหลดข้อมูล User
     df_users = load_sheet_data(USER_SHEET_NAME)
     
     col1, col2 = st.columns([3, 1])
@@ -177,37 +190,29 @@ if not st.session_state.current_user_name:
     
     if user_input_val:
         if not df_users.empty:
-            # ค้นหาใน df_users (สมมติว่า Column A คือ ID และ Column C คือ Name)
-            # ใช้ iloc เพื่ออ้างอิงตำแหน่งคอลัมน์โดยตรง (0=A, 2=C)
-            # match = df_users[df_users.iloc[:, 0] == user_input_val] # แบบ Exact Match
-            
-            # แบบค้นหา Flexible (แปลงเป็น String ทั้งคู่)
             match = df_users[df_users.iloc[:, 0].astype(str) == str(user_input_val)]
-            
             if not match.empty:
-                found_name = match.iloc[0, 2] # ดึงจาก Column C (Index 2)
+                found_name = match.iloc[0, 2]
                 st.session_state.current_user_id = user_input_val
                 st.session_state.current_user_name = found_name
-                st.toast(f"ยินดีต้อนรับคุณ {found_name} 👋", icon="✅")
+                st.toast(f"ยินดีต้อนรับ {found_name}", icon="✅")
                 time.sleep(1)
                 st.rerun()
             else:
-                st.error(f"❌ ไม่พบรหัสพนักงาน: {user_input_val}")
+                st.error(f"❌ ไม่พบรหัส: {user_input_val}")
         else:
-            st.warning("⚠️ โหลดข้อมูลพนักงานไม่ได้ หรือ Sheet ว่างเปล่า")
+            st.warning("⚠️ โหลดข้อมูลพนักงานไม่ได้")
 
-# --- PART 2: MAIN PICKING SYSTEM ---
+# --- PART 2: OPERATION ---
 else:
-    # Header ส่วนบน แสดงชื่อคนล็อกอิน
     c1, c2 = st.columns([3, 1])
     with c1:
-        st.title("📦 ระบบเบิกสินค้า")
-        st.caption(f"👤 ผู้ใช้งาน: **{st.session_state.current_user_name}** ({st.session_state.current_user_id})")
+        st.caption(f"👤: **{st.session_state.current_user_name}** ({st.session_state.current_user_id})")
     with c2:
         if st.button("Logout", type="secondary"):
             logout_user()
 
-    df_items = load_sheet_data(0) # โหลดข้อมูลสินค้า (Sheet แรก)
+    df_items = load_sheet_data(0)
 
     # 1. ORDER
     st.markdown("#### 1. Order ID")
@@ -251,7 +256,6 @@ else:
                     st.session_state.prod_val = res_p[0].data.decode("utf-8")
                     st.rerun()
         else:
-            # LOGIC แสดงข้อมูล
             target_loc_str = None
             prod_found = False
             
@@ -261,21 +265,48 @@ else:
                     prod_found = True
                     row = match.iloc[0]
                     
+                    # ข้อมูลสินค้า
                     try:
                         brand_name = str(row.iloc[3]) 
                         variant_name = str(row.iloc[5])
                         full_prod_name = f"{brand_name} {variant_name}"
+                        
+                        # ดึง QTY จาก Master
+                        master_qty_str = str(row.get('QTY', row.iloc[8])).strip()
+                        # พยายามแปลงเป็น int
+                        try:
+                            master_qty_int = int(float(master_qty_str))
+                        except:
+                            master_qty_int = 1 # ถ้าแปลงไม่ได้ให้ default เป็น 1
+                            
                     except:
-                        full_prod_name = "Error reading columns"
+                        full_prod_name = "Error reading"
+                        master_qty_int = 1
 
                     st.session_state.prod_display_name = full_prod_name
+                    st.session_state.master_qty = master_qty_int # เก็บไว้เทียบ
                     
+                    # ถ้ายังไม่ได้กำหนดค่าจริง ให้เริ่มต้นเท่ากับ Master
+                    if st.session_state.actual_qty == 0:
+                        st.session_state.actual_qty = master_qty_int
+
                     zone_val = str(row.get('Zone', '')).strip()
                     loc_val = str(row.get('Location', '')).strip()
                     target_loc_str = f"{zone_val}-{loc_val}"
                     
-                    st.success(f"✅ พบข้อมูล: **{full_prod_name}**")
-                    st.warning(f"📍 เป้าหมายเก็บ: **{target_loc_str}**")
+                    # แสดงผล
+                    st.success(f"✅ {full_prod_name}")
+                    
+                    c_info1, c_info2 = st.columns(2)
+                    c_info1.warning(f"📍 เป้าหมาย: **{target_loc_str}**")
+                    c_info2.info(f"🔢 ต้องหยิบ: **{st.session_state.master_qty}**")
+                    
+                    # --- ส่วนกรอกจำนวนหยิบจริง ---
+                    st.markdown("👇 **ระบุจำนวนที่หยิบจริง (Actual Qty)**")
+                    actual_input = st.number_input("จำนวนที่หยิบได้จริง", min_value=1, value=st.session_state.actual_qty, key="num_input_actual")
+                    # อัปเดตค่าเข้า Session State
+                    st.session_state.actual_qty = actual_input
+                    
                 else:
                     st.error(f"❌ ไม่พบ Barcode: {st.session_state.prod_val}")
             else:
@@ -284,6 +315,7 @@ else:
             if st.button("✏️ สแกนใหม่"):
                 st.session_state.prod_val = ""
                 st.session_state.loc_val = ""
+                st.session_state.actual_qty = 0 # reset
                 st.rerun()
 
             # 3. LOCATION
@@ -306,7 +338,7 @@ else:
                 else:
                     valid_loc = False
                     if st.session_state.loc_val == target_loc_str:
-                        st.success(f"✅ Location ถูกต้อง: {st.session_state.loc_val}")
+                        st.success(f"✅ ถูกต้อง: {st.session_state.loc_val}")
                         valid_loc = True
                     elif st.session_state.loc_val in target_loc_str:
                         st.warning(f"⚠️ ใกล้เคียง: {st.session_state.loc_val}")
@@ -317,7 +349,7 @@ else:
                             st.session_state.loc_val = ""
                             st.rerun()
 
-                    # 4. PACK & UPLOAD & LOG
+                    # 4. PACK & UPLOAD
                     if valid_loc:
                         st.markdown("---")
                         st.markdown(f"#### 4. ถ่ายรูป ({len(st.session_state.photo_gallery)}/5)")
@@ -340,28 +372,32 @@ else:
 
                         if len(st.session_state.photo_gallery) > 0:
                             st.markdown("---")
+                            # แสดงสรุปก่อนบันทึก
+                            st.caption(f"กำลังจะบันทึกยอดหยิบจริง: **{st.session_state.actual_qty}** ชิ้น")
+                            
                             if st.button(f"☁️ Upload & Save Log", type="primary", use_container_width=True):
                                 with st.spinner("กำลังบันทึกข้อมูล..."):
                                     srv = authenticate_drive()
                                     if srv:
-                                        fid = create_or_get_order_folder(srv, st.session_state.order_val, MAIN_FOLDER_ID)
-                                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                        folder_id, folder_link = create_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
                                         
-                                        first_file_id = "" 
-                                        
+                                        ts_name = datetime.now().strftime("%Y%m%d_%H%M%S")
                                         for i, img_bytes in enumerate(st.session_state.photo_gallery):
-                                            fn = f"{st.session_state.order_val}_{st.session_state.prod_val}_LOC-{st.session_state.loc_val}_{ts}_Img{i+1}.jpg"
-                                            upl_id = upload_photo(srv, img_bytes, fn, fid)
-                                            if i == 0: first_file_id = upl_id 
+                                            fn = f"Img{i+1}_{st.session_state.order_val}_{ts_name}.jpg"
+                                            upload_photo(srv, img_bytes, fn, folder_id)
                                         
-                                        # --- บันทึกลง Sheet (Logs) พร้อมชื่อคนหยิบ ---
+                                        timestamp_log = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                        # ส่ง st.session_state.actual_qty ไปบันทึก
                                         save_log_to_sheet(
-                                            st.session_state.current_user_name, # ส่งชื่อคนหยิบไปบันทึก
-                                            st.session_state.order_val,
-                                            st.session_state.prod_val,
-                                            st.session_state.prod_display_name,
-                                            st.session_state.loc_val,
-                                            first_file_id
+                                            timestamp=timestamp_log,
+                                            order_id=st.session_state.order_val,
+                                            barcode=st.session_state.prod_val,
+                                            prod_name=st.session_state.prod_display_name,
+                                            location=st.session_state.loc_val,
+                                            actual_qty=st.session_state.actual_qty, # ใช้ค่าจริง
+                                            user_id=st.session_state.current_user_id,
+                                            user_name=st.session_state.current_user_name,
+                                            folder_link=folder_link
                                         )
                                         
                                         st.balloons()
