@@ -9,6 +9,7 @@ from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
 import time
+import pytz # เรียกใช้ Library จัดการ Timezone
 
 # --- IMPORT LIBRARY กล้องตัวพิเศษ ---
 try:
@@ -20,6 +21,8 @@ except ImportError:
 # --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
+# กำหนด Timezone เป็นประเทศไทย
+THAI_TZ = pytz.timezone('Asia/Bangkok')
 
 # --- HELPER & AUTH FUNCTIONS ---
 def get_credentials():
@@ -68,19 +71,16 @@ def log_to_history(order_id, product_id, location, img_count):
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(SHEET_ID)
         
-        # ลองหา Sheet ชื่อ History ถ้าไม่มีให้สร้างใหม่ (หรือแจ้งเตือน)
         try:
             worksheet = sh.worksheet("History")
         except:
-            # ถ้าหาไม่เจอ ให้แจ้งเตือน (หรือจะเลือกให้เขียนใส่ Sheet แรกก็ได้)
             st.warning("⚠️ ไม่พบ Sheet 'History' ในไฟล์ Google Sheet กรุณาสร้าง Tab ชื่อ History")
             return
 
-        # เตรียมข้อมูล
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # แก้ไขเวลา: ใช้ datetime.now(THAI_TZ)
+        timestamp = datetime.now(THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
         row_data = [timestamp, order_id, product_id, location, img_count, "Success"]
         
-        # บันทึกต่อท้ายแถว
         worksheet.append_row(row_data)
         
     except Exception as e:
@@ -96,7 +96,6 @@ def authenticate_drive():
         st.error(f"Error Drive: {e}")
         return None
 
-# ฟังก์ชันอเนกประสงค์สำหรับสร้าง Folder
 def create_or_get_folder(service, folder_name, parent_id):
     query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     results = service.files().list(q=query, fields="files(id, name)").execute()
@@ -108,14 +107,13 @@ def create_or_get_folder(service, folder_name, parent_id):
         folder = service.files().create(body=file_metadata, fields='id').execute()
         return folder.get('id')
 
-# ฟังก์ชันจัดการโครงสร้างโฟลเดอร์แบบใหม่ (DD-MM-YYYY > Order_HH-MM)
 def prepare_destination_folder(service, order_id):
-    # 1. สร้าง/หา Folder วันที่ (DD-MM-YYYY)
-    date_folder_name = datetime.now().strftime("%d-%m-%Y")
+    # แก้ไขเวลา: ชื่อ Folder วันที่ (DD-MM-YYYY) ตามเวลาไทย
+    date_folder_name = datetime.now(THAI_TZ).strftime("%d-%m-%Y")
     date_folder_id = create_or_get_folder(service, date_folder_name, MAIN_FOLDER_ID)
     
-    # 2. สร้าง/หา Folder Order พร้อมเวลา (Order_HH-MM)
-    time_suffix = datetime.now().strftime("%H-%M")
+    # แก้ไขเวลา: ชื่อ Folder เวลา (HH-MM) ตามเวลาไทย
+    time_suffix = datetime.now(THAI_TZ).strftime("%H-%M")
     order_folder_name = f"{order_id}_{time_suffix}"
     final_folder_id = create_or_get_folder(service, order_folder_name, date_folder_id)
     
@@ -131,7 +129,6 @@ def upload_photo(service, file_obj, filename, folder_id):
         st.error(f"🔴 Upload Error: {e}")
         raise e
 
-# --- ฟังก์ชัน Reset ---
 def reset_all_data():
     st.session_state.order_val = ""
     st.session_state.prod_val = ""
@@ -157,7 +154,6 @@ df_items = load_sheet_data()
 st.markdown("#### 1. Order ID")
 
 if not st.session_state.order_val:
-    # --- กล้องอยู่ด้านบน ---
     cam_key = f"cam_order_{st.session_state.cam_counter}"
     scan_order = back_camera_input("แตะเพื่อเปิดกล้องสแกน Order", key=cam_key)
     
@@ -167,7 +163,6 @@ if not st.session_state.order_val:
             st.session_state.order_val = res[0].data.decode("utf-8").upper()
             st.rerun()
 
-    # --- ช่องกรอกอยู่ด้านล่าง ---
     manual_order = st.text_input("หรือพิมพ์ Order ID แล้วกด Enter", key="input_order_manual").strip().upper()
     if manual_order:
         st.session_state.order_val = manual_order
@@ -187,7 +182,6 @@ if st.session_state.order_val:
     st.markdown("#### 2. Scan สินค้า")
     
     if not st.session_state.prod_val:
-        # --- กล้องอยู่ด้านบน ---
         cam_key_prod = f"cam_prod_{st.session_state.cam_counter}"
         scan_prod = back_camera_input("แตะเพื่อเปิดกล้องสแกนสินค้า", key=cam_key_prod)
         
@@ -197,14 +191,12 @@ if st.session_state.order_val:
                 st.session_state.prod_val = res_p[0].data.decode("utf-8")
                 st.rerun()
         
-        # --- ช่องกรอกอยู่ด้านล่าง ---
         manual_prod = st.text_input("หรือพิมพ์ Barcode สินค้า แล้วกด Enter", key="input_prod_manual").strip()
         if manual_prod:
             st.session_state.prod_val = manual_prod
             st.rerun()
                 
     else:
-        # ตรวจสอบข้อมูลใน Sheet
         target_loc_str = None
         prod_found = False
         
@@ -238,7 +230,6 @@ if st.session_state.order_val:
             st.markdown(f"#### 3. ยืนยัน Location")
             
             if not st.session_state.loc_val:
-                # --- กล้องอยู่ด้านบน ---
                 cam_key_loc = f"cam_loc_{st.session_state.cam_counter}"
                 scan_loc = back_camera_input("แตะเพื่อเปิดกล้องสแกน Location", key=cam_key_loc)
                 if scan_loc:
@@ -247,7 +238,6 @@ if st.session_state.order_val:
                         st.session_state.loc_val = res_l[0].data.decode("utf-8").upper()
                         st.rerun()
 
-                # --- ช่องกรอกอยู่ด้านล่าง ---
                 manual_loc = st.text_input("หรือสแกน/พิมพ์ Location", key="input_loc_manual").strip().upper()
                 if manual_loc:
                     st.session_state.loc_val = manual_loc
@@ -267,16 +257,14 @@ if st.session_state.order_val:
                         st.rerun()
 
                 # ==========================================
-                # 4. PACKING & UPLOAD (แก้จุดสำคัญ)
+                # 4. PACKING & UPLOAD
                 # ==========================================
                 if valid_loc:
                     st.markdown("---")
                     st.markdown(f"#### 4. ถ่ายรูปปิดกล่อง ({len(st.session_state.photo_gallery)}/5)")
                     
-                    # 1. กล้องอยู่ด้านบนสุด (เปลี่ยนเป็นกล้องหลัง)
                     if len(st.session_state.photo_gallery) < 5:
                         pack_key = f"cam_pack_{st.session_state.cam_counter}"
-                        # เปลี่ยนจาก st.camera_input เป็น back_camera_input
                         pack_img = back_camera_input("แตะเพื่อถ่ายรูปสินค้า", key=pack_key)
                         
                         if pack_img:
@@ -286,7 +274,6 @@ if st.session_state.order_val:
                     else:
                         st.info("📷 ครบ 5 รูปแล้ว")
 
-                    # 2. รายการรูป (Gallery) อยู่ด้านล่างกล้อง
                     if st.session_state.photo_gallery:
                         st.markdown("##### รายการรูปที่รออัปโหลด:")
                         cols = st.columns(5)
@@ -297,23 +284,22 @@ if st.session_state.order_val:
                                     st.session_state.photo_gallery.pop(idx)
                                     st.rerun()
 
-                    # 3. ปุ่ม Upload อยู่ล่างสุด
                     if len(st.session_state.photo_gallery) > 0:
                         st.markdown("---")
                         if st.button(f"☁️ Upload {len(st.session_state.photo_gallery)} รูป", type="primary", use_container_width=True):
                             with st.spinner("กำลังดำเนินการ..."):
                                 srv = authenticate_drive()
                                 if srv:
-                                    # 1. เตรียมโฟลเดอร์แบบใหม่ (DD-MM-YYYY > Order_HH-MM)
+                                    # 1. เตรียมโฟลเดอร์ (ใช้เวลาไทย)
                                     target_fid, folder_name = prepare_destination_folder(srv, st.session_state.order_val)
                                     
-                                    # 2. อัปโหลดรูป
-                                    ts_str = datetime.now().strftime("%H%M%S")
+                                    # 2. อัปโหลดรูป (ใช้เวลาไทยในชื่อไฟล์)
+                                    ts_str = datetime.now(THAI_TZ).strftime("%H%M%S")
                                     for i, img_bytes in enumerate(st.session_state.photo_gallery):
                                         fn = f"{st.session_state.order_val}_{st.session_state.prod_val}_LOC-{st.session_state.loc_val}_{ts_str}_Img{i+1}.jpg"
                                         upload_photo(srv, img_bytes, fn, target_fid)
                                     
-                                    # 3. บันทึกลง Sheet History
+                                    # 3. บันทึกลง Sheet (ใช้เวลาไทยใน Log)
                                     log_to_history(
                                         st.session_state.order_val,
                                         st.session_state.prod_val,
@@ -327,7 +313,6 @@ if st.session_state.order_val:
                                     reset_all_data()
                                     st.rerun()
 
-# ปุ่ม Reset ล่างสุด
 st.markdown("---")
 if st.button("🔄 เริ่มใหม่ทั้งหมด", type="secondary", use_container_width=True):
     reset_all_data()
