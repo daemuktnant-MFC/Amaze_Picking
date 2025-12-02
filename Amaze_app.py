@@ -117,6 +117,7 @@ def check_user_login(scanned_id):
     except Exception as e:
         return None, f"Error: {e}"
 
+# --- LOG FUNCTION UPDATED: เพิ่ม 'quantity' ในข้อมูลที่บันทึก
 def log_to_history(cart_items, order_id, img_count, user_id, user_name):
     try:
         creds = get_credentials()
@@ -131,16 +132,19 @@ def log_to_history(cart_items, order_id, img_count, user_id, user_name):
         timestamp = datetime.now(THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
         
         for item in cart_items:
+            # เพิ่ม item['quantity'] ใน row_data
             row_data = [
                 timestamp, 
                 order_id, 
                 item['product_id'], 
                 item['location'],   
+                item['quantity'],  # <<<<< NEW: บันทึกจำนวน
                 img_count,          
                 "Success", 
                 user_id,            
                 user_name           
             ]
+            # ตรวจสอบว่าคอลัมน์ใน Sheet 'History' ถูกตั้งค่าให้รับค่า Quantity แล้ว
             worksheet.append_row(row_data)
             
     except Exception as e:
@@ -191,6 +195,7 @@ def reset_all_data():
     st.session_state.cam_counter += 1
     st.session_state.picked_cart = [] 
     st.session_state.packing_mode = False 
+    st.session_state.quantity = 1 # <<<<< NEW: รีเซ็ตจำนวน
 
 # --- UI LOGIC ---
 if 'order_val' not in st.session_state: st.session_state.order_val = ""
@@ -202,11 +207,12 @@ if 'user_name' not in st.session_state: st.session_state.user_name = ""
 if 'user_id_raw' not in st.session_state: st.session_state.user_id_raw = "" 
 if 'picked_cart' not in st.session_state: st.session_state.picked_cart = []
 if 'packing_mode' not in st.session_state: st.session_state.packing_mode = False
+if 'quantity' not in st.session_state: st.session_state.quantity = 1 # <<<<< NEW: เพิ่มตัวแปรสำหรับจำนวน
 
 st.title("🛒 ระบบเบิกสินค้า V2.0")
 df_items = load_sheet_data()
 
-# 0. LOGIN SECTION
+# 0. LOGIN SECTION (UNCHANGED)
 st.markdown("##### 👤 ผู้เบิกสินค้า:")
 
 if not st.session_state.user_name:
@@ -257,7 +263,7 @@ else:
 
 st.divider()
 
-# 1. ORDER ID
+# 1. ORDER ID (UNCHANGED)
 st.markdown("#### 1. Order ID")
 if not st.session_state.order_val:
     # --- CAMERA INPUT ---
@@ -290,7 +296,7 @@ if st.session_state.order_val and not st.session_state.packing_mode:
     st.markdown("---")
     st.markdown(f"#### 2. หยิบสินค้า (รายการที่ {len(st.session_state.picked_cart) + 1})")
     
-    # 2.1 SCAN PRODUCT
+    # 2.1 SCAN PRODUCT (UNCHANGED)
     if not st.session_state.prod_val:
         cam_key_prod = f"cam_prod_{st.session_state.cam_counter}"
         scan_prod = back_camera_input("แตะเพื่อสแกนสินค้า", key=cam_key_prod)
@@ -308,7 +314,7 @@ if st.session_state.order_val and not st.session_state.packing_mode:
             st.rerun()
             
     else:
-        # 2.2 VERIFY & LOCATION
+        # 2.2 VERIFY & LOCATION (UNCHANGED)
         target_loc_str = None
         prod_found = False
         prod_name_disp = ""
@@ -329,9 +335,10 @@ if st.session_state.order_val and not st.session_state.packing_mode:
                 st.error(f"❌ ไม่พบ Barcode: {st.session_state.prod_val}")
                 if st.button("สแกนใหม่"):
                     st.session_state.prod_val = ""
+                    st.session_state.quantity = 1 # <<<<< NEW: รีเซ็ตจำนวน
                     st.rerun()
         
-        # 2.3 CONFIRM LOCATION
+        # 2.3 CONFIRM LOCATION (UNCHANGED)
         if prod_found and target_loc_str:
             if not st.session_state.loc_val:
                 cam_key_loc = f"cam_loc_{st.session_state.cam_counter}"
@@ -360,30 +367,50 @@ if st.session_state.order_val and not st.session_state.packing_mode:
                         st.session_state.loc_val = ""
                         st.rerun()
                 
-                # 2.4 ADD TO CART
+                # 2.4 QUANTITY INPUT & ADD TO CART
                 if valid_loc:
                     st.markdown("---")
-                    if st.button(f"📥 ยืนยันหยิบชิ้นนี้", type="primary", use_container_width=True):
-                        item_data = {
-                            "product_id": st.session_state.prod_val,
-                            "product_name": prod_name_disp,
-                            "location": st.session_state.loc_val,
-                            "time": datetime.now(THAI_TZ).strftime("%H:%M:%S")
-                        }
-                        st.session_state.picked_cart.append(item_data)
-                        st.session_state.prod_val = ""
-                        st.session_state.loc_val = ""
-                        st.session_state.cam_counter += 1
-                        st.toast(f"หยิบใส่ตะกร้าแล้ว ({len(st.session_state.picked_cart)} ชิ้น)")
-                        time.sleep(0.5)
-                        st.rerun()
+                    
+                    # <<<<< NEW: กล่องใส่จำนวนสินค้า
+                    st.session_state.quantity = st.number_input(
+                        "จำนวนสินค้าที่หยิบ (ชิ้น)", 
+                        min_value=1, 
+                        value=st.session_state.quantity, 
+                        step=1, 
+                        key="input_quantity"
+                    )
+
+                    if st.session_state.quantity > 0:
+                        if st.button(f"📥 ยืนยันหยิบ {st.session_state.quantity} ชิ้น", type="primary", use_container_width=True):
+                            item_data = {
+                                "product_id": st.session_state.prod_val,
+                                "product_name": prod_name_disp,
+                                "location": st.session_state.loc_val,
+                                "quantity": st.session_state.quantity, # <<<<< NEW: บันทึกจำนวน
+                                "time": datetime.now(THAI_TZ).strftime("%H:%M:%S")
+                            }
+                            st.session_state.picked_cart.append(item_data)
+                            
+                            # รีเซ็ตค่าเพื่อเริ่มหยิบรายการถัดไป
+                            st.session_state.prod_val = ""
+                            st.session_state.loc_val = ""
+                            st.session_state.quantity = 1 # <<<<< NEW: ตั้งจำนวนเริ่มต้นใหม่
+                            st.session_state.cam_counter += 1
+                            
+                            st.toast(f"หยิบใส่ตะกร้าแล้ว ({len(st.session_state.picked_cart)} รายการ)")
+                            time.sleep(0.5)
+                            st.rerun()
+                    else:
+                         st.warning("กรุณากรอกจำนวนสินค้า")
+
 
     # --- SHOW CART & PROCEED BUTTON ---
     if st.session_state.picked_cart:
         st.divider()
-        st.markdown(f"##### 🛒 รายการที่หยิบแล้ว ({len(st.session_state.picked_cart)} ชิ้น)")
+        st.markdown(f"##### 🛒 รายการที่หยิบแล้ว ({len(st.session_state.picked_cart)} รายการ)")
         df_cart = pd.DataFrame(st.session_state.picked_cart)
-        st.dataframe(df_cart[['product_id', 'location', 'product_name']], use_container_width=True, hide_index=True)
+        # แสดงคอลัมน์ Quantity ในตาราง
+        st.dataframe(df_cart[['product_id', 'quantity', 'location', 'product_name']], use_container_width=True, hide_index=True)
         
         st.divider()
         col_act1, col_act2 = st.columns(2)
@@ -393,7 +420,7 @@ if st.session_state.order_val and not st.session_state.packing_mode:
                 st.rerun()
 
 elif st.session_state.order_val and st.session_state.packing_mode:
-    # >>>>> MODE 2: PACKING <<<<<
+    # >>>>> MODE 2: PACKING (UNCHANGED) <<<<<
     st.markdown("---")
     st.info("✅ หยิบครบแล้ว เข้าสู่ขั้นตอนแพ็คสินค้า")
     st.markdown(f"#### 3. ถ่ายรูปปิดกล่อง ({len(st.session_state.photo_gallery)}/5)")
@@ -443,6 +470,7 @@ elif st.session_state.order_val and st.session_state.packing_mode:
                         fn = f"{st.session_state.order_val}_PACKED_{ts_str}_Img{i+1}.jpg"
                         upload_photo(srv, img_bytes, fn, target_fid)
                     
+                    # เรียกใช้ฟังก์ชัน Log ที่ถูกปรับปรุงแล้ว
                     log_to_history(
                         st.session_state.picked_cart,
                         st.session_state.order_val,
