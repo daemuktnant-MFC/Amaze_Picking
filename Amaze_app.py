@@ -103,6 +103,7 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
         image_link = f"https://drive.google.com/open?id={file_id}"
         
         # จัดเรียงข้อมูลลง Column A ถึง I (9 ช่อง)
+        # G = Pick Qty, I = Image Link
         row_data = [
             timestamp, 
             picker_name, 
@@ -179,7 +180,7 @@ def reset_for_next_item():
     st.session_state.loc_val = ""
     st.session_state.prod_display_name = ""
     st.session_state.photo_gallery = []
-    st.session_state.pick_qty = 1 
+    st.session_state.pick_qty = 1 # รีเซ็ตจำนวนกลับเป็น 1
     st.session_state.cam_counter += 1
 
 def reset_all_data():
@@ -204,7 +205,7 @@ if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
 if 'prod_display_name' not in st.session_state: st.session_state.prod_display_name = ""
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
-if 'pick_qty' not in st.session_state: st.session_state.pick_qty = 1 
+if 'pick_qty' not in st.session_state: st.session_state.pick_qty = 1 # Default qty
 
 # --- PART 1: LOGIN ---
 if not st.session_state.current_user_name:
@@ -269,6 +270,7 @@ else:
                 st.session_state.order_val = res[0].data.decode("utf-8").upper()
                 st.rerun()
     else:
+        # แสดง Order ปัจจุบัน และปุ่มเปลี่ยน Order
         col_ord_1, col_ord_2 = st.columns([3, 1])
         with col_ord_1:
             st.success(f"📦 Order: **{st.session_state.order_val}**")
@@ -359,13 +361,13 @@ else:
                             st.session_state.loc_val = ""
                             st.rerun()
 
-                    # 4. PICK QUANTITY
+                    # 4. PICK QUANTITY (เพิ่มส่วนนี้)
                     if valid_loc:
                         st.markdown("---")
                         st.markdown(f"#### 4. จำนวนที่หยิบ (Pick Qty)")
                         st.session_state.pick_qty = st.number_input("ระบุจำนวน", min_value=1, value=1, step=1)
 
-                        # 5. PACK / PHOTO (Back Camera Forced)
+                        # 5. PACK / PHOTO
                         st.markdown("---")
                         st.markdown(f"#### 5. ถ่ายรูป ({len(st.session_state.photo_gallery)}/5)")
                         
@@ -379,19 +381,9 @@ else:
                                         st.rerun()
                         
                         if len(st.session_state.photo_gallery) < 5:
-                            # ใช้ back_camera_input บังคับกล้องหลัง
-                            pack_img = back_camera_input("แตะเพื่อเปิดกล้องหลังถ่ายรูปสินค้า", key=f"cam_pack_{st.session_state.cam_counter}")
+                            pack_img = st.camera_input("ถ่ายรูปสินค้า", key=f"cam_pack_{st.session_state.cam_counter}")
                             if pack_img:
-                                # แปลงค่าจาก back_camera_input เป็น bytes เพื่อเก็บลง Gallery
-                                img_pil = Image.open(pack_img)
-                                buf = io.BytesIO()
-                                #img_pil.save(buf, format='JPEG')
-                                # ตรวจสอบและแปลงโหมดสีเป็น RGB ก่อนบันทึกเสมอ.
-                                if img_pil.mode in ("RGBA", "P"):
-                                    img_pil = img_pil.convert("RGB")
-
-                                img_pil.save(buf, format='JPEG')
-                                st.session_state.photo_gallery.append(buf.getvalue())
+                                st.session_state.photo_gallery.append(pack_img.getvalue())
                                 st.session_state.cam_counter += 1
                                 st.rerun()
 
@@ -402,6 +394,7 @@ else:
                                 with st.spinner("กำลังบันทึกข้อมูล..."):
                                     srv = authenticate_drive()
                                     if srv:
+                                        # ล็อค Logic การสร้าง Folder ห้ามแก้
                                         target_fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
                                         
                                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -412,19 +405,21 @@ else:
                                             upl_id = upload_photo(srv, img_bytes, fn, target_fid)
                                             if i == 0: first_file_id = upl_id 
                                         
+                                        # บันทึก Log รวมถึง Pick Qty (Column G)
                                         save_log_to_sheet(
                                             st.session_state.current_user_name,
                                             st.session_state.order_val,
                                             st.session_state.prod_val,
                                             st.session_state.prod_display_name,
                                             st.session_state.loc_val,
-                                            st.session_state.pick_qty,
+                                            st.session_state.pick_qty, # ส่งค่า Pick Qty ไปบันทึก
                                             first_file_id
                                         )
                                         
                                         st.balloons()
                                         st.success(f"บันทึกสินค้า {st.session_state.prod_display_name} เรียบร้อย!")
                                         time.sleep(1.5)
+                                        
+                                        # สำคัญ: Reset แค่ Item เพื่อให้สแกนชิ้นต่อไปใน Order เดิม
                                         reset_for_next_item()
                                         st.rerun()
-
