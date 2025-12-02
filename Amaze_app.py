@@ -43,6 +43,15 @@ def get_credentials():
         st.error(f"❌ Error Credentials: {e}")
         return None
 
+def authenticate_drive():
+    try:
+        creds = get_credentials()
+        if creds: return build('drive', 'v3', credentials=creds)
+        return None
+    except Exception as e:
+        st.error(f"Error Drive: {e}")
+        return None
+
 # --- GOOGLE SERVICES ---
 @st.cache_data(ttl=600)
 def load_sheet_data(sheet_name=0): 
@@ -81,37 +90,80 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, file_
         try:
             worksheet = sh.worksheet(LOG_SHEET_NAME)
         except:
-            worksheet = sh.add_worksheet(title=LOG_SHEET_NAME, rows="1000", cols="10")
-            worksheet.append_row(["Timestamp", "Picker Name", "Order ID", "Barcode", "Product Name", "Location", "Image ID"])
+            worksheet = sh.add_worksheet(title=LOG_SHEET_NAME, rows="1000", cols="20")
+            # Header A-I
+            worksheet.append_row([
+                "Timestamp", "Picker Name", "Order ID", "Barcode", "Product Name", "Location", 
+                "Reserved1", "Reserved2", "Image Link (Col I)"
+            ])
             
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        worksheet.append_row([timestamp, picker_name, order_id, barcode, prod_name, location, file_id])
-        print("Log saved.")
+        
+        # สร้าง Link รูปภาพ
+        image_link = f"https://drive.google.com/open?id={file_id}"
+        
+        # จัดเรียงข้อมูลลง Column A ถึง I (9 ช่อง)
+        # A=Time, B=Picker, C=Order, D=Barcode, E=ProdName, F=Location, G="", H="", I=Link
+        row_data = [
+            timestamp, 
+            picker_name, 
+            order_id, 
+            barcode, 
+            prod_name, 
+            location, 
+            "", # Col G (เว้นว่าง)
+            "", # Col H (เว้นว่าง)
+            image_link # Col I (เป้าหมาย)
+        ]
+        
+        worksheet.append_row(row_data)
+        print("Log saved to Col I.")
     except Exception as e:
         st.warning(f"⚠️ บันทึก Log ไม่สำเร็จ: {e}")
 
-# --- FUNCTION ที่หายไป (เติมให้แล้วครับ) ---
-def authenticate_drive():
-    try:
-        creds = get_credentials()
-        if creds: return build('drive', 'v3', credentials=creds)
-        return None
-    except Exception as e:
-        st.error(f"Error Drive: {e}")
-        return None
-# ----------------------------------------
-
-def create_or_get_order_folder(service, order_id, parent_id):
-    date_prefix = datetime.now().strftime("%d-%m-%Y")
-    folder_name = f"{date_prefix}_{order_id}"
-    query = f"name = '{folder_name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    files = results.get('files', [])
-    if files: return files[0]['id']
+# ==============================================================================
+# 🔒 CRITICAL SECTION: FOLDER STRUCTURE (DO NOT EDIT)
+# ==============================================================================
+# กฏเหล็ก: ห้ามแก้ไข Logic การสร้าง Folder ในส่วนนี้เด็ดขาด
+# Structure: Main > "dd-mm-yyyy" > "Order_HH-MM" > Images
+# ==============================================================================
+def get_target_folder_structure(service, order_id, main_parent_id):
+    # 1. จัดการ Folder วันที่ (dd-mm-yyyy)
+    date_folder_name = datetime.now().strftime("%d-%m-%Y")
+    
+    # ค้นหาว่ามี Folder วันนี้หรือยัง
+    q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    res_date = service.files().list(q=q_date, fields="files(id)").execute()
+    files_date = res_date.get('files', [])
+    
+    if files_date:
+        date_folder_id = files_date[0]['id']
     else:
-        file_metadata = {'name': folder_name, 'parents': [parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
-        folder = service.files().create(body=file_metadata, fields='id').execute()
-        return folder.get('id')
+        # สร้างใหม่ถ้ายังไม่มี
+        meta_date = {
+            'name': date_folder_name,
+            'parents': [main_parent_id],
+            'mimeType': 'application/vnd.google-apps.folder'
+        }
+        date_folder = service.files().create(body=meta_date, fields='id').execute()
+        date_folder_id = date_folder.get('id')
+        
+    # 2. จัดการ Folder Order_HH-MM (ข้างใน Folder วันที่)
+    time_suffix = datetime.now().strftime("%H-%M")
+    order_folder_name = f"{order_id}_{time_suffix}"
+    
+    # สร้าง Folder Order ใหม่เสมอ (เพราะเวลาเปลี่ยนตลอด)
+    meta_order = {
+        'name': order_folder_name,
+        'parents': [date_folder_id], # ใส่ใน Folder วันที่
+        'mimeType': 'application/vnd.google-apps.folder'
+    }
+    order_folder = service.files().create(body=meta_order, fields='id').execute()
+    
+    return order_folder.get('id')
+# ==============================================================================
+# END CRITICAL SECTION
+# ==============================================================================
 
 def upload_photo(service, file_obj, filename, folder_id):
     try:
@@ -323,18 +375,19 @@ else:
 
                         if len(st.session_state.photo_gallery) > 0:
                             st.markdown("---")
-                            # จุดนี้คือจุดที่เคย Error ตอนนี้แก้ให้แล้วครับ
                             if st.button(f"☁️ Upload & Save Log", type="primary", use_container_width=True):
                                 with st.spinner("กำลังบันทึกข้อมูล..."):
-                                    srv = authenticate_drive() # เรียกใช้ได้แล้ว!
+                                    srv = authenticate_drive()
                                     if srv:
-                                        fid = create_or_get_order_folder(srv, st.session_state.order_val, MAIN_FOLDER_ID)
+                                        # เรียกใช้ฟังก์ชันใหม่ที่ล็อคโครงสร้าง Folder ไว้
+                                        target_fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
+                                        
                                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                                         first_file_id = "" 
                                         
                                         for i, img_bytes in enumerate(st.session_state.photo_gallery):
                                             fn = f"{st.session_state.order_val}_{st.session_state.prod_val}_LOC-{st.session_state.loc_val}_{ts}_Img{i+1}.jpg"
-                                            upl_id = upload_photo(srv, img_bytes, fn, fid)
+                                            upl_id = upload_photo(srv, img_bytes, fn, target_fid)
                                             if i == 0: first_file_id = upl_id 
                                         
                                         save_log_to_sheet(
