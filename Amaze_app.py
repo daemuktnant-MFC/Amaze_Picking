@@ -145,7 +145,7 @@ if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
 
-st.title("📦 ระบบเบิกสินค้า")
+st.title("📦 Smart Picking")
 df_items = load_sheet_data()
 
 # ==========================================
@@ -317,3 +317,4 @@ st.markdown("---")
 if st.button("🔄 เริ่มใหม่ทั้งหมด", type="secondary", use_container_width=True):
     reset_all_data()
     st.rerun()
+
