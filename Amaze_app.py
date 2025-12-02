@@ -81,7 +81,7 @@ def load_sheet_data(sheet_name=0):
         print(f"Sheet Error ({sheet_name}): {e}")
         return pd.DataFrame()
 
-def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, file_id):
+def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_qty, file_id):
     try:
         creds = get_credentials()
         gc = gspread.authorize(creds)
@@ -91,10 +91,10 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, file_
             worksheet = sh.worksheet(LOG_SHEET_NAME)
         except:
             worksheet = sh.add_worksheet(title=LOG_SHEET_NAME, rows="1000", cols="20")
-            # Header A-I
+            # Header
             worksheet.append_row([
                 "Timestamp", "Picker Name", "Order ID", "Barcode", "Product Name", "Location", 
-                "Reserved1", "Reserved2", "Image Link (Col I)"
+                "Pick Qty", "Reserved", "Image Link (Col I)"
             ])
             
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -103,7 +103,7 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, file_
         image_link = f"https://drive.google.com/open?id={file_id}"
         
         # จัดเรียงข้อมูลลง Column A ถึง I (9 ช่อง)
-        # A=Time, B=Picker, C=Order, D=Barcode, E=ProdName, F=Location, G="", H="", I=Link
+        # G = Pick Qty, I = Image Link
         row_data = [
             timestamp, 
             picker_name, 
@@ -111,20 +111,19 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, file_
             barcode, 
             prod_name, 
             location, 
-            "", # Col G (เว้นว่าง)
-            "", # Col H (เว้นว่าง)
-            image_link # Col I (เป้าหมาย)
+            pick_qty, # Col G
+            "",       # Col H (Reserved)
+            image_link # Col I
         ]
         
         worksheet.append_row(row_data)
-        print("Log saved to Col I.")
+        print("Log saved.")
     except Exception as e:
         st.warning(f"⚠️ บันทึก Log ไม่สำเร็จ: {e}")
 
 # ==============================================================================
-# 🔒 CRITICAL SECTION: FOLDER STRUCTURE (DO NOT EDIT)
+# 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED)
 # ==============================================================================
-# กฏเหล็ก: ห้ามแก้ไข Logic การสร้าง Folder ในส่วนนี้เด็ดขาด
 # Structure: Main > "dd-mm-yyyy" > "Order_HH-MM" > Images
 # ==============================================================================
 def get_target_folder_structure(service, order_id, main_parent_id):
@@ -152,10 +151,9 @@ def get_target_folder_structure(service, order_id, main_parent_id):
     time_suffix = datetime.now().strftime("%H-%M")
     order_folder_name = f"{order_id}_{time_suffix}"
     
-    # สร้าง Folder Order ใหม่เสมอ (เพราะเวลาเปลี่ยนตลอด)
     meta_order = {
         'name': order_folder_name,
-        'parents': [date_folder_id], # ใส่ใน Folder วันที่
+        'parents': [date_folder_id], 
         'mimeType': 'application/vnd.google-apps.folder'
     }
     order_folder = service.files().create(body=meta_order, fields='id').execute()
@@ -175,13 +173,20 @@ def upload_photo(service, file_obj, filename, folder_id):
         st.error(f"🔴 Upload Error: {e}")
         raise e
 
-def reset_all_data():
-    st.session_state.order_val = ""
+# --- RESET FUNCTIONS ---
+def reset_for_next_item():
+    """รีเซ็ตเฉพาะส่วนสินค้า เพื่อให้สแกนชิ้นต่อไปใน Order เดิมได้เลย"""
     st.session_state.prod_val = ""
     st.session_state.loc_val = ""
     st.session_state.prod_display_name = ""
     st.session_state.photo_gallery = []
+    st.session_state.pick_qty = 1 # รีเซ็ตจำนวนกลับเป็น 1
     st.session_state.cam_counter += 1
+
+def reset_all_data():
+    """รีเซ็ตทั้งหมดเพื่อเริ่ม Order ใหม่"""
+    st.session_state.order_val = ""
+    reset_for_next_item()
 
 def logout_user():
     st.session_state.current_user_name = ""
@@ -200,6 +205,7 @@ if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
 if 'prod_display_name' not in st.session_state: st.session_state.prod_display_name = ""
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
+if 'pick_qty' not in st.session_state: st.session_state.pick_qty = 1 # Default qty
 
 # --- PART 1: LOGIN ---
 if not st.session_state.current_user_name:
@@ -264,10 +270,14 @@ else:
                 st.session_state.order_val = res[0].data.decode("utf-8").upper()
                 st.rerun()
     else:
-        st.success(f"📦 Order: **{st.session_state.order_val}**")
-        if st.button("✏️ แก้ไข Order"):
-            st.session_state.order_val = ""
-            st.rerun()
+        # แสดง Order ปัจจุบัน และปุ่มเปลี่ยน Order
+        col_ord_1, col_ord_2 = st.columns([3, 1])
+        with col_ord_1:
+            st.success(f"📦 Order: **{st.session_state.order_val}**")
+        with col_ord_2:
+            if st.button("เปลี่ยน Order / จบงาน", type="secondary"):
+                reset_all_data()
+                st.rerun()
 
     # 2. PRODUCT
     if st.session_state.order_val:
@@ -316,9 +326,8 @@ else:
             else:
                  st.warning("⚠️ Loading Data...")
 
-            if st.button("✏️ สแกนใหม่"):
-                st.session_state.prod_val = ""
-                st.session_state.loc_val = ""
+            if st.button("✏️ สแกนสินค้าใหม่ (ตัวนี้ผิด)"):
+                reset_for_next_item()
                 st.rerun()
 
             # 3. LOCATION
@@ -352,10 +361,15 @@ else:
                             st.session_state.loc_val = ""
                             st.rerun()
 
-                    # 4. PACK
+                    # 4. PICK QUANTITY (เพิ่มส่วนนี้)
                     if valid_loc:
                         st.markdown("---")
-                        st.markdown(f"#### 4. ถ่ายรูป ({len(st.session_state.photo_gallery)}/5)")
+                        st.markdown(f"#### 4. จำนวนที่หยิบ (Pick Qty)")
+                        st.session_state.pick_qty = st.number_input("ระบุจำนวน", min_value=1, value=1, step=1)
+
+                        # 5. PACK / PHOTO
+                        st.markdown("---")
+                        st.markdown(f"#### 5. ถ่ายรูป ({len(st.session_state.photo_gallery)}/5)")
                         
                         if st.session_state.photo_gallery:
                             cols = st.columns(5)
@@ -375,11 +389,12 @@ else:
 
                         if len(st.session_state.photo_gallery) > 0:
                             st.markdown("---")
-                            if st.button(f"☁️ Upload & Save Log", type="primary", use_container_width=True):
+                            # ปุ่ม Upload
+                            if st.button(f"☁️ บันทึกรายการนี้ (Upload)", type="primary", use_container_width=True):
                                 with st.spinner("กำลังบันทึกข้อมูล..."):
                                     srv = authenticate_drive()
                                     if srv:
-                                        # เรียกใช้ฟังก์ชันใหม่ที่ล็อคโครงสร้าง Folder ไว้
+                                        # ล็อค Logic การสร้าง Folder ห้ามแก้
                                         target_fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
                                         
                                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -390,22 +405,21 @@ else:
                                             upl_id = upload_photo(srv, img_bytes, fn, target_fid)
                                             if i == 0: first_file_id = upl_id 
                                         
+                                        # บันทึก Log รวมถึง Pick Qty (Column G)
                                         save_log_to_sheet(
                                             st.session_state.current_user_name,
                                             st.session_state.order_val,
                                             st.session_state.prod_val,
                                             st.session_state.prod_display_name,
                                             st.session_state.loc_val,
+                                            st.session_state.pick_qty, # ส่งค่า Pick Qty ไปบันทึก
                                             first_file_id
                                         )
                                         
                                         st.balloons()
-                                        st.success("บันทึกเสร็จสิ้น!")
-                                        time.sleep(2)
-                                        reset_all_data()
+                                        st.success(f"บันทึกสินค้า {st.session_state.prod_display_name} เรียบร้อย!")
+                                        time.sleep(1.5)
+                                        
+                                        # สำคัญ: Reset แค่ Item เพื่อให้สแกนชิ้นต่อไปใน Order เดิม
+                                        reset_for_next_item()
                                         st.rerun()
-
-    st.markdown("---")
-    if st.button("🔄 เริ่มใหม่ทั้งหมด", type="secondary", use_container_width=True):
-        reset_all_data()
-        st.rerun()
