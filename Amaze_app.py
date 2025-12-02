@@ -23,7 +23,7 @@ MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 THAI_TZ = pytz.timezone('Asia/Bangkok')
 
-# --- PAGE CONFIG & CSS ---
+# --- PAGE CONFIG & CSS (UNCHANGED) ---
 st.set_page_config(page_title="Smart Picking V2", page_icon="🛒")
 
 st.markdown("""
@@ -219,31 +219,26 @@ if not st.session_state.user_name:
     if scan_user:
         res = decode(Image.open(scan_user))
         if res: temp_user_id = res[0].data.decode("utf-8").strip()
-
+        
     # --- MANUAL INPUT ---
     manual_user_input = st.text_input("หรือพิมพ์รหัสพนักงาน", key="input_user_manual").strip()
 
-    # --- NEW BUTTON: Process Manual/Visual Cue ---
-    if st.button("✅ ยืนยัน/ตรวจสอบรหัส", key='btn_check_id', type='primary', use_container_width=True):
+    # --- NEW BUTTON: ยืนยันรหัสพนักงาน ---
+    if st.button("✅ ยืนยันรหัสพนักงาน", key='btn_check_id', type='primary', use_container_width=True):
+        input_to_check = manual_user_input if manual_user_input else None
         
-        # Priority check: If camera scanned, temp_user_id is already set and forced a rerun.
-        # This button handles the manual input submission path.
-        if manual_user_input:
-            temp_user_id = manual_user_input # Use manual input if button is pressed
-        
-        if temp_user_id:
-            with st.spinner(f"กำลังตรวจสอบรหัส: {temp_user_id}..."):
-                real_name, error_msg = check_user_login(temp_user_id)
+        if input_to_check:
+            with st.spinner(f"กำลังตรวจสอบรหัส: {input_to_check}..."):
+                real_name, error_msg = check_user_login(input_to_check)
                 
                 if real_name:
                     st.session_state.user_name = real_name
-                    st.session_state.user_id_raw = temp_user_id
+                    st.session_state.user_id_raw = input_to_check
                     st.rerun()
                 else:
                     st.error(f"❌ {error_msg}")
         else:
             st.warning("กรุณาสแกนหรือพิมพ์รหัสพนักงานก่อนกดปุ่มยืนยัน")
-
 
     st.warning("⚠️ กรุณาสแกนบัตรหรือใส่รหัสพนักงานเพื่อเข้าสู่ระบบ")
     st.stop() 
@@ -276,7 +271,7 @@ if not st.session_state.order_val:
     # --- MANUAL INPUT ---
     manual_order = st.text_input("หรือพิมพ์ Order ID", key="input_order_manual").strip().upper()
     
-    # --- NEW BUTTON ---
+    # --- NEW BUTTON: ยืนยัน Order ---
     if st.button("✅ ยืนยัน Order", key='btn_check_order', type='primary', use_container_width=True):
         if manual_order:
             st.session_state.order_val = manual_order
@@ -309,7 +304,7 @@ if st.session_state.order_val and not st.session_state.packing_mode:
         
         manual_prod = st.text_input("หรือพิมพ์ Barcode สินค้า", key="input_prod_manual").strip()
         
-        # --- NEW BUTTON ---
+        # --- NEW BUTTON: ยืนยันสินค้า ---
         if st.button("✅ ยืนยันสินค้า", key='btn_check_prod', type='primary', use_container_width=True):
             if manual_prod:
                 st.session_state.prod_val = manual_prod
@@ -318,7 +313,7 @@ if st.session_state.order_val and not st.session_state.packing_mode:
                 st.warning("กรุณาสแกนหรือพิมพ์ Barcode สินค้าก่อนกดปุ่มยืนยัน")
             
     else:
-        # 2.2 VERIFY & LOCATION (UNCHANGED)
+        # 2.2 VERIFY & LOCATION
         target_loc_str = None
         prod_found = False
         prod_name_disp = ""
@@ -354,7 +349,7 @@ if st.session_state.order_val and not st.session_state.packing_mode:
                 
                 manual_loc = st.text_input("หรือพิมพ์ Location", key="input_loc_manual").strip().upper()
 
-                # --- NEW BUTTON ---
+                # --- NEW BUTTON: ยืนยัน Location ---
                 if st.button("✅ ยืนยัน Location", key='btn_check_loc', type='primary', use_container_width=True):
                     if manual_loc:
                         st.session_state.loc_val = manual_loc
@@ -416,7 +411,7 @@ elif st.session_state.order_val and st.session_state.packing_mode:
         pack_key = f"cam_pack_{st.session_state.cam_counter}"
         pack_img = back_camera_input("แตะเพื่อถ่ายรูปกล่องสินค้า", key=pack_key)
         
-        # --- NEW BUTTON ---
+        # --- NEW BUTTON: ถ่ายรูป (Visual Cue) ---
         if st.button("📸 ถ่ายรูป", key='btn_take_photo', use_container_width=True):
             st.info("💡 กรุณาแตะที่กล้องด้านบนเพื่อเปิดกล้อง และกด 'Capture' ภายใน Browser/App กล้องของมือถือ")
         
