@@ -84,7 +84,6 @@ def load_sheet_data():
         print(f"Sheet Error: {e}")
         return pd.DataFrame()
 
-# --- MODIFIED: เพิ่ม user_name ลงใน log ---
 def log_to_history(order_id, product_id, location, img_count, user_name):
     try:
         creds = get_credentials()
@@ -97,7 +96,6 @@ def log_to_history(order_id, product_id, location, img_count, user_name):
             return
             
         timestamp = datetime.now(THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        # เพิ่ม user_name ต่อท้าย
         row_data = [timestamp, order_id, product_id, location, img_count, "Success", user_name]
         
         worksheet.append_row(row_data)
@@ -147,7 +145,7 @@ def reset_all_data():
     st.session_state.loc_val = ""
     st.session_state.photo_gallery = []
     st.session_state.cam_counter += 1
-    # หมายเหตุ: ไม่ล้าง user_name เพื่อความสะดวก
+    # ไม่ล้าง user_name
 
 # --- UI LOGIC ---
 if 'order_val' not in st.session_state: st.session_state.order_val = ""
@@ -155,27 +153,43 @@ if 'prod_val' not in st.session_state: st.session_state.prod_val = ""
 if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
-# เพิ่ม state สำหรับ user
 if 'user_name' not in st.session_state: st.session_state.user_name = ""
 
 st.title("📦 ระบบเบิกสินค้า")
 df_items = load_sheet_data()
 
-# --- 0. USER INPUT (ส่วนที่เพิ่มใหม่) ---
-with st.container():
-    col_u1, col_u2 = st.columns([1, 3])
-    with col_u1:
-        st.markdown("##### 👤 ผู้เบิก:")
-    with col_u2:
-        # ช่องกรอกชื่อ (ระบบจะจำค่าไว้ใน session_state.user_name)
-        user_input = st.text_input("ระบุชื่อพนักงาน", key="input_user", label_visibility="collapsed").strip()
-        if user_input:
-            st.session_state.user_name = user_input
+# --- 0. USER INPUT (SCAN & MANUAL) ---
+st.markdown("##### 👤 ผู้เบิกสินค้า:")
 
-# เช็คว่าใส่ชื่อหรือยัง ถ้ายังให้เตือน
 if not st.session_state.user_name:
-    st.warning("⚠️ กรุณาระบุชื่อผู้เบิกสินค้าก่อนเริ่มงาน")
-    st.stop() # หยุดการทำงานไม่ให้ไปต่อจนกว่าจะใส่ชื่อ
+    # 1. กล้องสแกนบัตร (อยู่บน)
+    cam_key_user = f"cam_user_{st.session_state.cam_counter}"
+    scan_user = back_camera_input("แตะเพื่อสแกนบัตรพนักงาน", key=cam_key_user)
+    if scan_user:
+        res = decode(Image.open(scan_user))
+        if res:
+            st.session_state.user_name = res[0].data.decode("utf-8")
+            st.rerun()
+
+    # 2. ช่องพิมพ์ชื่อ (อยู่ล่าง)
+    manual_user = st.text_input("หรือพิมพ์ชื่อ/รหัสพนักงาน", key="input_user_manual").strip()
+    if manual_order := manual_user: # walrus operator for cleaner check
+        st.session_state.user_name = manual_user
+        st.rerun()
+
+    # หยุดระบบถ้ายังไม่มี user
+    st.warning("⚠️ กรุณาระบุชื่อ/สแกนบัตรผู้เบิกสินค้าก่อนเริ่มงาน")
+    st.stop() 
+
+else:
+    # ถ้ามี User แล้ว โชว์ชื่อและปุ่มเปลี่ยนคน
+    col_u1, col_u2 = st.columns([3, 1])
+    with col_u1:
+        st.success(f"👤 พนักงาน: **{st.session_state.user_name}**")
+    with col_u2:
+        if st.button("เปลี่ยนคน", use_container_width=True):
+            st.session_state.user_name = ""
+            st.rerun()
 
 st.divider()
 
@@ -311,7 +325,6 @@ if st.session_state.order_val:
                                         fn = f"{st.session_state.order_val}_{st.session_state.prod_val}_LOC-{st.session_state.loc_val}_{ts_str}_Img{i+1}.jpg"
                                         upload_photo(srv, img_bytes, fn, target_fid)
                                     
-                                    # ส่ง user_name ไปบันทึกด้วย
                                     log_to_history(
                                         st.session_state.order_val,
                                         st.session_state.prod_val,
