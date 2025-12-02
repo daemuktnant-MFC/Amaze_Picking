@@ -87,7 +87,6 @@ def load_sheet_data(sheet_name=0):
         print(f"Sheet Error ({sheet_name}): {e}")
         return pd.DataFrame()
 
-# --- [EDIT 1] เพิ่ม parameter user_id และแก้ Column H ---
 def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_qty, user_id, file_id):
     try:
         creds = get_credentials()
@@ -98,17 +97,15 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
             worksheet = sh.worksheet(LOG_SHEET_NAME)
         except:
             worksheet = sh.add_worksheet(title=LOG_SHEET_NAME, rows="1000", cols="20")
-            # Header - เปลี่ยน Reserved เป็น User
+            # Header
             worksheet.append_row([
                 "Timestamp", "Picker Name", "Order ID", "Barcode", "Product Name", "Location", 
                 "Pick Qty", "User", "Image Link (Col I)"
             ])
             
         timestamp = get_thai_time().strftime("%Y-%m-%d %H:%M:%S")
-        
         image_link = f"https://drive.google.com/open?id={file_id}"
         
-        # จัดเรียงข้อมูล - ใส่ user_id ลงในช่องที่ 8 (Column H)
         row_data = [
             timestamp, 
             picker_name, 
@@ -117,7 +114,7 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
             prod_name, 
             location, 
             pick_qty, 
-            str(user_id), # Col H (User Login ID)
+            str(user_id), 
             image_link 
         ]
         
@@ -222,17 +219,18 @@ if not st.session_state.current_user_name:
     
     df_users = load_sheet_data(USER_SHEET_NAME)
     
-    col1, col2 = st.columns([3, 1])
-    manual_user = col1.text_input("พิมพ์รหัสพนักงาน", key="input_user_manual").strip()
-    
+    # --- LAYOUT CHANGE: Camera Above Input ---
     cam_key_user = f"cam_user_{st.session_state.cam_counter}"
     scan_user = back_camera_input("แตะเพื่อสแกนบัตรพนักงาน", key=cam_key_user)
     
+    manual_user = st.text_input("หรือพิมพ์รหัสพนักงาน", key="input_user_manual").strip()
+    
     user_input_val = None
-    if manual_user: user_input_val = manual_user
-    elif scan_user:
+    if scan_user:
         res_u = decode(Image.open(scan_user))
         if res_u: user_input_val = res_u[0].data.decode("utf-8")
+    elif manual_user: 
+        user_input_val = manual_user
     
     if user_input_val:
         if not df_users.empty:
@@ -264,19 +262,20 @@ else:
     # 1. ORDER
     st.markdown("#### 1. Order ID")
     if not st.session_state.order_val:
-        col1, col2 = st.columns([3, 1])
-        manual_order = col1.text_input("พิมพ์ Order ID", key="input_order_manual").strip().upper()
-        if manual_order:
-            st.session_state.order_val = manual_order
-            st.rerun()
-        
+        # --- LAYOUT CHANGE: Camera Above Input ---
         cam_key = f"cam_order_{st.session_state.cam_counter}"
         scan_order = back_camera_input("แตะเพื่อสแกน Order", key=cam_key)
+        
+        manual_order = st.text_input("หรือพิมพ์ Order ID", key="input_order_manual").strip().upper()
+        
         if scan_order:
             res = decode(Image.open(scan_order))
             if res:
                 st.session_state.order_val = res[0].data.decode("utf-8").upper()
                 st.rerun()
+        elif manual_order:
+            st.session_state.order_val = manual_order
+            st.rerun()
     else:
         col_ord_1, col_ord_2 = st.columns([3, 1])
         with col_ord_1:
@@ -292,19 +291,20 @@ else:
         st.markdown("#### 2. Scan สินค้า")
         
         if not st.session_state.prod_val:
-            col1, col2 = st.columns([3, 1])
-            manual_prod = col1.text_input("พิมพ์ Barcode", key="input_prod_manual").strip()
-            if manual_prod:
-                st.session_state.prod_val = manual_prod
-                st.rerun()
-
+            # --- LAYOUT CHANGE: Camera Above Input ---
             cam_key_prod = f"cam_prod_{st.session_state.cam_counter}"
             scan_prod = back_camera_input("แตะเพื่อสแกนสินค้า", key=cam_key_prod)
+            
+            manual_prod = st.text_input("หรือพิมพ์ Barcode", key="input_prod_manual").strip()
+            
             if scan_prod:
                 res_p = decode(Image.open(scan_prod))
                 if res_p:
                     st.session_state.prod_val = res_p[0].data.decode("utf-8")
                     st.rerun()
+            elif manual_prod:
+                st.session_state.prod_val = manual_prod
+                st.rerun()
         else:
             target_loc_str = None
             prod_found = False
@@ -343,17 +343,20 @@ else:
                 st.markdown(f"#### 3. ยืนยัน Location")
                 
                 if not st.session_state.loc_val:
-                    manual_loc = st.text_input("Scan/พิมพ์ Location", key="input_loc_manual").strip().upper()
-                    if manual_loc:
-                        st.session_state.loc_val = manual_loc
-                        st.rerun()
+                    # --- LAYOUT CHANGE: Camera Above Input ---
                     cam_key_loc = f"cam_loc_{st.session_state.cam_counter}"
                     scan_loc = back_camera_input("แตะเพื่อสแกน Location", key=cam_key_loc)
+                    
+                    manual_loc = st.text_input("หรือพิมพ์ Location", key="input_loc_manual").strip().upper()
+                    
                     if scan_loc:
                         res_l = decode(Image.open(scan_loc))
                         if res_l:
                             st.session_state.loc_val = res_l[0].data.decode("utf-8").upper()
                             st.rerun()
+                    elif manual_loc:
+                        st.session_state.loc_val = manual_loc
+                        st.rerun()
                 else:
                     valid_loc = False
                     if st.session_state.loc_val == target_loc_str:
@@ -378,7 +381,17 @@ else:
                         st.markdown("---")
                         st.markdown(f"#### 5. ถ่ายรูป ({len(st.session_state.photo_gallery)}/5)")
                         
+                        # --- LAYOUT CHANGE: Camera Input at Top ---
+                        if len(st.session_state.photo_gallery) < 5:
+                            pack_img = st.camera_input("แตะเพื่อถ่ายรูปสินค้า", key=f"cam_pack_{st.session_state.cam_counter}")
+                            if pack_img:
+                                st.session_state.photo_gallery.append(pack_img.getvalue())
+                                st.session_state.cam_counter += 1
+                                st.rerun()
+                        
+                        # --- Show Gallery Below Camera ---
                         if st.session_state.photo_gallery:
+                            st.write("รูปที่ถ่ายแล้ว:")
                             cols = st.columns(5)
                             for idx, img_data in enumerate(st.session_state.photo_gallery):
                                 with cols[idx]:
@@ -386,13 +399,6 @@ else:
                                     if st.button("🗑️", key=f"del_{idx}"):
                                         st.session_state.photo_gallery.pop(idx)
                                         st.rerun()
-                        
-                        if len(st.session_state.photo_gallery) < 5:
-                            pack_img = st.camera_input("ถ่ายรูปสินค้า", key=f"cam_pack_{st.session_state.cam_counter}")
-                            if pack_img:
-                                st.session_state.photo_gallery.append(pack_img.getvalue())
-                                st.session_state.cam_counter += 1
-                                st.rerun()
 
                         if len(st.session_state.photo_gallery) > 0:
                             st.markdown("---")
@@ -410,7 +416,6 @@ else:
                                             upl_id = upload_photo(srv, img_bytes, fn, target_fid)
                                             if i == 0: first_file_id = upl_id 
                                         
-                                        # [EDIT 2] ส่ง current_user_id ไปบันทึกด้วย
                                         save_log_to_sheet(
                                             st.session_state.current_user_name,
                                             st.session_state.order_val,
@@ -418,7 +423,7 @@ else:
                                             st.session_state.prod_display_name,
                                             st.session_state.loc_val,
                                             st.session_state.pick_qty, 
-                                            st.session_state.current_user_id, # <-- ส่ง ID
+                                            st.session_state.current_user_id, 
                                             first_file_id
                                         )
                                         
