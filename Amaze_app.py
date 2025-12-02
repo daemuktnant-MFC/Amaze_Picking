@@ -64,6 +64,7 @@ def get_credentials():
         st.error(f"❌ Error Credentials: {e}")
         return None
 
+# --- LOAD DATA: ITEM ---
 @st.cache_data(ttl=600)
 def load_sheet_data():
     try:
@@ -81,8 +82,46 @@ def load_sheet_data():
                 df['Barcode'] = df['Barcode'].astype(str)
         return df
     except Exception as e:
-        print(f"Sheet Error: {e}")
         return pd.DataFrame()
+
+# --- NEW FUNCTION: CHECK USER ---
+# ฟังก์ชันใหม่สำหรับตรวจสอบ User จาก Sheet "User"
+def check_user_login(scanned_id):
+    try:
+        creds = get_credentials()
+        if not creds: return None, "Auth Error"
+        
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(SHEET_ID)
+        
+        # ลองดึงข้อมูลจาก Tab "User"
+        try:
+            worksheet = sh.worksheet("User")
+        except:
+            return None, "ไม่พบ Tab ชื่อ 'User' ใน Google Sheet"
+            
+        data = worksheet.get_all_records()
+        df_users = pd.DataFrame(data)
+        
+        # แปลง USERNAME เป็น String เพื่อเทียบกับที่สแกนมา
+        if 'USERNAME' in df_users.columns:
+            df_users['USERNAME'] = df_users['USERNAME'].astype(str).str.strip()
+        else:
+            return None, "ไม่พบคอลัมน์ 'USERNAME'"
+            
+        # ค้นหา
+        scanned_id = str(scanned_id).strip()
+        match = df_users[df_users['USERNAME'] == scanned_id]
+        
+        if not match.empty:
+            # เจอ! ดึงชื่อจากคอลัมน์ Name
+            user_real_name = match.iloc[0].get('Name', 'Unknown Name')
+            return user_real_name, None
+        else:
+            return None, "ไม่พบรหัสพนักงานนี้ในระบบ"
+            
+    except Exception as e:
+        return None, f"Error Checking User: {e}"
 
 def log_to_history(order_id, product_id, location, img_count, user_name):
     try:
@@ -154,41 +193,59 @@ if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
 if 'user_name' not in st.session_state: st.session_state.user_name = ""
+if 'user_id_raw' not in st.session_state: st.session_state.user_id_raw = "" 
 
 st.title("📦 ระบบเบิกสินค้า")
 df_items = load_sheet_data()
 
-# --- 0. USER INPUT (SCAN & MANUAL) ---
+# --- 0. USER VALIDATION SECTION ---
 st.markdown("##### 👤 ผู้เบิกสินค้า:")
 
 if not st.session_state.user_name:
-    # 1. กล้องสแกนบัตร (อยู่บน)
+    # ยังไม่ได้ Login -> แสดงกล้องสแกนบัตร
+    
+    # 1. กล้องสแกนบัตร
     cam_key_user = f"cam_user_{st.session_state.cam_counter}"
     scan_user = back_camera_input("แตะเพื่อสแกนบัตรพนักงาน", key=cam_key_user)
+    
+    temp_user_id = None
+    
+    # รับค่าจากกล้อง
     if scan_user:
         res = decode(Image.open(scan_user))
         if res:
-            st.session_state.user_name = res[0].data.decode("utf-8")
-            st.rerun()
+            temp_user_id = res[0].data.decode("utf-8").strip()
 
-    # 2. ช่องพิมพ์ชื่อ (อยู่ล่าง)
-    manual_user = st.text_input("หรือพิมพ์ชื่อ/รหัสพนักงาน", key="input_user_manual").strip()
-    if manual_order := manual_user: # walrus operator for cleaner check
-        st.session_state.user_name = manual_user
-        st.rerun()
+    # รับค่าจากการพิมพ์ (Manual)
+    if not temp_user_id:
+        manual_user_input = st.text_input("หรือพิมพ์รหัสพนักงาน (USERNAME)", key="input_user_manual").strip()
+        if manual_user_input:
+            temp_user_id = manual_user_input
 
-    # หยุดระบบถ้ายังไม่มี user
-    st.warning("⚠️ กรุณาระบุชื่อ/สแกนบัตรผู้เบิกสินค้าก่อนเริ่มงาน")
-    st.stop() 
+    # ถ้าได้รับ ID มาแล้ว -> ทำการตรวจสอบกับ Sheet
+    if temp_user_id:
+        with st.spinner(f"กำลังตรวจสอบรหัส: {temp_user_id}..."):
+            real_name, error_msg = check_user_login(temp_user_id)
+            
+            if real_name:
+                st.session_state.user_name = real_name # เก็บชื่อจริง
+                st.session_state.user_id_raw = temp_user_id # เก็บ ID ไว้เผื่อใช้
+                st.rerun()
+            else:
+                st.error(f"❌ {error_msg} (ลองใหม่อีกครั้ง)")
+
+    st.warning("⚠️ กรุณาสแกนบัตรหรือใส่รหัสพนักงานเพื่อเข้าสู่ระบบ")
+    st.stop() # หยุดการทำงานตรงนี้ถ้ายังไม่ผ่าน
 
 else:
-    # ถ้ามี User แล้ว โชว์ชื่อและปุ่มเปลี่ยนคน
+    # Login แล้ว -> แสดงชื่อพนักงานที่ดึงมาจาก Sheet
     col_u1, col_u2 = st.columns([3, 1])
     with col_u1:
-        st.success(f"👤 พนักงาน: **{st.session_state.user_name}**")
+        st.success(f"👤 สวัสดีครับ: **{st.session_state.user_name}**")
     with col_u2:
         if st.button("เปลี่ยนคน", use_container_width=True):
             st.session_state.user_name = ""
+            st.session_state.user_id_raw = ""
             st.rerun()
 
 st.divider()
@@ -330,7 +387,7 @@ if st.session_state.order_val:
                                         st.session_state.prod_val,
                                         st.session_state.loc_val,
                                         len(st.session_state.photo_gallery),
-                                        st.session_state.user_name
+                                        st.session_state.user_name # บันทึกชื่อจริงลง Log
                                     )
                                     
                                     st.balloons()
