@@ -216,29 +216,30 @@ if not st.session_state.user_name:
     scan_user = back_camera_input("แตะเพื่อสแกนบัตรพนักงาน", key=cam_key_user)
     
     temp_user_id = None
+    
+    # 1. Processing from Camera (Auto-trigger)
     if scan_user:
         res = decode(Image.open(scan_user))
         if res: temp_user_id = res[0].data.decode("utf-8").strip()
         
-    # --- MANUAL INPUT ---
+    # 2. Manual Input
     manual_user_input = st.text_input("หรือพิมพ์รหัสพนักงาน", key="input_user_manual").strip()
 
-    # --- NEW BUTTON: ยืนยันรหัสพนักงาน ---
-    if st.button("✅ ยืนยันรหัสพนักงาน", key='btn_check_id', type='primary', use_container_width=True):
-        input_to_check = manual_user_input if manual_user_input else None
+    # 3. Processing from Manual Input (Auto-trigger when pressing Enter/Losing focus)
+    if manual_user_input and not temp_user_id:
+        temp_user_id = manual_user_input
         
-        if input_to_check:
-            with st.spinner(f"กำลังตรวจสอบรหัส: {input_to_check}..."):
-                real_name, error_msg = check_user_login(input_to_check)
-                
-                if real_name:
-                    st.session_state.user_name = real_name
-                    st.session_state.user_id_raw = input_to_check
-                    st.rerun()
-                else:
-                    st.error(f"❌ {error_msg}")
-        else:
-            st.warning("กรุณาสแกนหรือพิมพ์รหัสพนักงานก่อนกดปุ่มยืนยัน")
+    # --- VALIDATION AND LOGIN ---
+    if temp_user_id:
+        with st.spinner(f"กำลังตรวจสอบรหัส: {temp_user_id}..."):
+            real_name, error_msg = check_user_login(temp_user_id)
+            
+            if real_name:
+                st.session_state.user_name = real_name
+                st.session_state.user_id_raw = temp_user_id
+                st.rerun()
+            else:
+                st.error(f"❌ {error_msg}")
 
     st.warning("⚠️ กรุณาสแกนบัตรหรือใส่รหัสพนักงานเพื่อเข้าสู่ระบบ")
     st.stop() 
@@ -271,13 +272,10 @@ if not st.session_state.order_val:
     # --- MANUAL INPUT ---
     manual_order = st.text_input("หรือพิมพ์ Order ID", key="input_order_manual").strip().upper()
     
-    # --- NEW BUTTON: ยืนยัน Order ---
-    if st.button("✅ ยืนยัน Order", key='btn_check_order', type='primary', use_container_width=True):
-        if manual_order:
-            st.session_state.order_val = manual_order
-            st.rerun()
-        else:
-            st.warning("กรุณาสแกนหรือพิมพ์ Order ID ก่อนกดปุ่มยืนยัน")
+    # Auto-trigger when manual input is entered
+    if manual_order:
+        st.session_state.order_val = manual_order
+        st.rerun()
     
 else:
     st.info(f"📦 กำลังเบิกออเดอร์: **{st.session_state.order_val}**")
@@ -304,13 +302,10 @@ if st.session_state.order_val and not st.session_state.packing_mode:
         
         manual_prod = st.text_input("หรือพิมพ์ Barcode สินค้า", key="input_prod_manual").strip()
         
-        # --- NEW BUTTON: ยืนยันสินค้า ---
-        if st.button("✅ ยืนยันสินค้า", key='btn_check_prod', type='primary', use_container_width=True):
-            if manual_prod:
-                st.session_state.prod_val = manual_prod
-                st.rerun()
-            else:
-                st.warning("กรุณาสแกนหรือพิมพ์ Barcode สินค้าก่อนกดปุ่มยืนยัน")
+        # Auto-trigger when manual input is entered
+        if manual_prod:
+            st.session_state.prod_val = manual_prod
+            st.rerun()
             
     else:
         # 2.2 VERIFY & LOCATION
@@ -349,13 +344,10 @@ if st.session_state.order_val and not st.session_state.packing_mode:
                 
                 manual_loc = st.text_input("หรือพิมพ์ Location", key="input_loc_manual").strip().upper()
 
-                # --- NEW BUTTON: ยืนยัน Location ---
-                if st.button("✅ ยืนยัน Location", key='btn_check_loc', type='primary', use_container_width=True):
-                    if manual_loc:
-                        st.session_state.loc_val = manual_loc
-                        st.rerun()
-                    else:
-                        st.warning("กรุณาสแกนหรือพิมพ์ Location ก่อนกดปุ่มยืนยัน")
+                # Auto-trigger when manual input is entered
+                if manual_loc:
+                    st.session_state.loc_val = manual_loc
+                    st.rerun()
 
             else:
                 valid_loc = False
