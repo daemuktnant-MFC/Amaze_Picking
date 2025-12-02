@@ -385,6 +385,11 @@ else:
                                 # แปลงค่าจาก back_camera_input เป็น bytes เพื่อเก็บลง Gallery
                                 img_pil = Image.open(pack_img)
                                 buf = io.BytesIO()
+                                #img_pil.save(buf, format='JPEG')
+                                # ตรวจสอบและแปลงโหมดสีเป็น RGB ก่อนบันทึกเสมอ.
+                                if img_pil.mode in ("RGBA", "P"):
+                                    img_pil = img_pil.convert("RGB")
+
                                 img_pil.save(buf, format='JPEG')
                                 st.session_state.photo_gallery.append(buf.getvalue())
                                 st.session_state.cam_counter += 1
@@ -422,3 +427,4 @@ else:
                                         time.sleep(1.5)
                                         reset_for_next_item()
                                         st.rerun()
+
