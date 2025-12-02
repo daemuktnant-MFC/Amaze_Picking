@@ -23,25 +23,20 @@ MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 THAI_TZ = pytz.timezone('Asia/Bangkok')
 
-# --- PAGE CONFIG & CSS (ส่วนที่เพิ่มมา) ---
+# --- PAGE CONFIG & CSS ---
 st.set_page_config(page_title="Smart Picking (Pro)", page_icon="📦")
 
 st.markdown("""
     <style>
-    /* ซ่อน Menu และ Footer ของ Streamlit เพื่อความสะอาดตา */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-    
-    /* ปรับแต่งปุ่มกดให้ดูใหญ่และกดง่าย */
     .stButton>button {
         width: 100%;
         border-radius: 10px;
         height: 3em;
         font-weight: bold;
     }
-    
-    /* ปรับแต่งส่วนแสดงผลสถานะ */
     .stSuccess, .stInfo, .stWarning, .stError {
         padding: 1rem;
         border-radius: 10px;
@@ -89,7 +84,8 @@ def load_sheet_data():
         print(f"Sheet Error: {e}")
         return pd.DataFrame()
 
-def log_to_history(order_id, product_id, location, img_count):
+# --- MODIFIED: เพิ่ม user_name ลงใน log ---
+def log_to_history(order_id, product_id, location, img_count, user_name):
     try:
         creds = get_credentials()
         gc = gspread.authorize(creds)
@@ -99,8 +95,11 @@ def log_to_history(order_id, product_id, location, img_count):
         except:
             st.warning("⚠️ ไม่พบ Sheet 'History'")
             return
+            
         timestamp = datetime.now(THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        row_data = [timestamp, order_id, product_id, location, img_count, "Success"]
+        # เพิ่ม user_name ต่อท้าย
+        row_data = [timestamp, order_id, product_id, location, img_count, "Success", user_name]
+        
         worksheet.append_row(row_data)
     except Exception as e:
         st.error(f"❌ Log Error: {e}")
@@ -148,6 +147,7 @@ def reset_all_data():
     st.session_state.loc_val = ""
     st.session_state.photo_gallery = []
     st.session_state.cam_counter += 1
+    # หมายเหตุ: ไม่ล้าง user_name เพื่อความสะดวก
 
 # --- UI LOGIC ---
 if 'order_val' not in st.session_state: st.session_state.order_val = ""
@@ -155,9 +155,29 @@ if 'prod_val' not in st.session_state: st.session_state.prod_val = ""
 if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
+# เพิ่ม state สำหรับ user
+if 'user_name' not in st.session_state: st.session_state.user_name = ""
 
-st.title("📦 Smart Picking")
+st.title("📦 ระบบเบิกสินค้า")
 df_items = load_sheet_data()
+
+# --- 0. USER INPUT (ส่วนที่เพิ่มใหม่) ---
+with st.container():
+    col_u1, col_u2 = st.columns([1, 3])
+    with col_u1:
+        st.markdown("##### 👤 ผู้เบิก:")
+    with col_u2:
+        # ช่องกรอกชื่อ (ระบบจะจำค่าไว้ใน session_state.user_name)
+        user_input = st.text_input("ระบุชื่อพนักงาน", key="input_user", label_visibility="collapsed").strip()
+        if user_input:
+            st.session_state.user_name = user_input
+
+# เช็คว่าใส่ชื่อหรือยัง ถ้ายังให้เตือน
+if not st.session_state.user_name:
+    st.warning("⚠️ กรุณาระบุชื่อผู้เบิกสินค้าก่อนเริ่มงาน")
+    st.stop() # หยุดการทำงานไม่ให้ไปต่อจนกว่าจะใส่ชื่อ
+
+st.divider()
 
 # 1. ORDER
 st.markdown("#### 1. Order ID")
@@ -276,14 +296,10 @@ if st.session_state.order_val:
 
                     if len(st.session_state.photo_gallery) > 0:
                         st.markdown("---")
+                        upload_placeholder = st.empty()
                         
-                        # --- ส่วนปุ่ม Upload แบบซ่อนตัวได้ ---
-                        upload_placeholder = st.empty() # สร้างพื้นที่ว่างสำหรับปุ่ม
-                        
-                        # ถ้ากดปุ่มนี้ ให้ทำคำสั่งใน if
                         if upload_placeholder.button(f"☁️ Upload {len(st.session_state.photo_gallery)} รูป", type="primary", use_container_width=True):
-                            
-                            upload_placeholder.empty() # 1. ลบปุ่มทิ้งทันที เพื่อกันกดซ้ำ
+                            upload_placeholder.empty()
                             
                             with st.spinner("กำลังอัปโหลด... ห้ามปิดหน้านี้"):
                                 srv = authenticate_drive()
@@ -295,15 +311,17 @@ if st.session_state.order_val:
                                         fn = f"{st.session_state.order_val}_{st.session_state.prod_val}_LOC-{st.session_state.loc_val}_{ts_str}_Img{i+1}.jpg"
                                         upload_photo(srv, img_bytes, fn, target_fid)
                                     
+                                    # ส่ง user_name ไปบันทึกด้วย
                                     log_to_history(
                                         st.session_state.order_val,
                                         st.session_state.prod_val,
                                         st.session_state.loc_val,
-                                        len(st.session_state.photo_gallery)
+                                        len(st.session_state.photo_gallery),
+                                        st.session_state.user_name
                                     )
                                     
                                     st.balloons()
-                                    st.success(f"✅ บันทึกสำเร็จ! ({folder_name})")
+                                    st.success(f"✅ บันทึกสำเร็จ! โดย: {st.session_state.user_name}")
                                     time.sleep(2)
                                     reset_all_data()
                                     st.rerun()
