@@ -11,13 +11,13 @@ import io
 import time
 import pytz
 
-# --- IMPORT LIBRARY กล้องตัวพิเศษ (ใช้เฉพาะส่วนสแกน) ---
+# --- IMPORT LIBRARY กล้องตัวพิเศษ (ใช้งานทั้งแอป) ---
 try:
     from streamlit_back_camera_input import back_camera_input
 except ImportError:
     st.error("⚠️ กรุณาเพิ่ม 'streamlit-back-camera-input' ในไฟล์ requirements.txt")
     st.stop()
-    
+
 # --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
@@ -41,7 +41,6 @@ st.markdown("""
         padding: 1rem;
         border-radius: 10px;
     }
-    /* Style สำหรับตารางรายการสินค้า */
     .dataframe {font-size: 0.8rem !important;}
     </style>
 """, unsafe_allow_html=True)
@@ -85,7 +84,6 @@ def load_sheet_data():
     except Exception as e:
         return pd.DataFrame()
 
-# --- CHECK USER FUNCTION ---
 def check_user_login(scanned_id):
     try:
         creds = get_credentials()
@@ -119,7 +117,6 @@ def check_user_login(scanned_id):
     except Exception as e:
         return None, f"Error: {e}"
 
-# --- LOG FUNCTION (Updated for User ID + Name) ---
 def log_to_history(cart_items, order_id, img_count, user_id, user_name):
     try:
         creds = get_credentials()
@@ -133,24 +130,22 @@ def log_to_history(cart_items, order_id, img_count, user_id, user_name):
             
         timestamp = datetime.now(THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")
         
-        # วนลูปบันทึกทีละรายการสินค้าที่อยู่ในตะกร้า
         for item in cart_items:
             row_data = [
                 timestamp, 
                 order_id, 
-                item['product_id'], # Product Barcode
-                item['location'],   # Location
-                img_count,          # จำนวนรูป (ของกล่องรวม)
+                item['product_id'], 
+                item['location'],   
+                img_count,          
                 "Success", 
-                user_id,            # Column G: User ID
-                user_name           # Column H: User Name
+                user_id,            
+                user_name           
             ]
             worksheet.append_row(row_data)
             
     except Exception as e:
         st.error(f"❌ Log Error: {e}")
 
-# --- DRIVE FUNCTIONS ---
 def authenticate_drive():
     try:
         creds = get_credentials()
@@ -194,8 +189,8 @@ def reset_all_data():
     st.session_state.loc_val = ""
     st.session_state.photo_gallery = []
     st.session_state.cam_counter += 1
-    st.session_state.picked_cart = [] # Clear ตะกร้า
-    st.session_state.packing_mode = False # กลับสู่โหมด Picking
+    st.session_state.picked_cart = [] 
+    st.session_state.packing_mode = False 
 
 # --- UI LOGIC ---
 if 'order_val' not in st.session_state: st.session_state.order_val = ""
@@ -205,15 +200,13 @@ if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
 if 'user_name' not in st.session_state: st.session_state.user_name = ""
 if 'user_id_raw' not in st.session_state: st.session_state.user_id_raw = "" 
-
-# New States for Multi-Item
 if 'picked_cart' not in st.session_state: st.session_state.picked_cart = []
 if 'packing_mode' not in st.session_state: st.session_state.packing_mode = False
 
 st.title("🛒 ระบบเบิกสินค้า V2.0")
 df_items = load_sheet_data()
 
-# --- 0. LOGIN SECTION ---
+# 0. LOGIN SECTION
 st.markdown("##### 👤 ผู้เบิกสินค้า:")
 
 if not st.session_state.user_name:
@@ -230,29 +223,32 @@ if not st.session_state.user_name:
         if manual_user_input: temp_user_id = manual_user_input
 
     if temp_user_id:
-        with st.spinner(f"ตรวจสอบรหัส: {temp_user_id}..."):
+        with st.spinner(f"กำลังตรวจสอบรหัส: {temp_user_id}..."):
             real_name, error_msg = check_user_login(temp_user_id)
+            
             if real_name:
                 st.session_state.user_name = real_name
                 st.session_state.user_id_raw = temp_user_id
                 st.rerun()
             else:
                 st.error(f"❌ {error_msg}")
-    st.warning("⚠️ กรุณาล็อกอินก่อนเริ่มงาน")
-    st.stop()
+
+    st.warning("⚠️ กรุณาสแกนบัตรหรือใส่รหัสพนักงานเพื่อเข้าสู่ระบบ")
+    st.stop() 
+
 else:
     col_u1, col_u2 = st.columns([3, 1])
     with col_u1:
-        st.success(f"👤 พนักงาน: **{st.session_state.user_name}** (ID: {st.session_state.user_id_raw})")
+        st.success(f"👤 สวัสดีครับ: **{st.session_state.user_name}**")
     with col_u2:
-        if st.button("Logout", use_container_width=True):
+        if st.button("เปลี่ยนคน", use_container_width=True):
             st.session_state.user_name = ""
             st.session_state.user_id_raw = ""
             st.rerun()
 
 st.divider()
 
-# --- 1. ORDER ID (LOCKED) ---
+# 1. ORDER ID
 st.markdown("#### 1. Order ID")
 if not st.session_state.order_val:
     cam_key = f"cam_order_{st.session_state.cam_counter}"
@@ -273,9 +269,9 @@ else:
             reset_all_data()
             st.rerun()
 
-# --- LOGIC แยกโหมด: PICKING vs PACKING ---
+# --- LOGIC SEPARATOR: PICKING vs PACKING ---
 if st.session_state.order_val and not st.session_state.packing_mode:
-    # >>>>> MODE 1: PICKING (หยิบสินค้า) <<<<<
+    # >>>>> MODE 1: PICKING <<<<<
     st.markdown("---")
     st.markdown(f"#### 2. หยิบสินค้า (รายการที่ {len(st.session_state.picked_cart) + 1})")
     
@@ -332,9 +328,8 @@ if st.session_state.order_val and not st.session_state.packing_mode:
                     st.session_state.loc_val = manual_loc
                     st.rerun()
             else:
-                # Check Match
                 valid_loc = False
-                if st.session_state.loc_val in target_loc_str: # Allow partial match
+                if st.session_state.loc_val in target_loc_str:
                     st.success(f"✅ ถูกต้อง! ({st.session_state.loc_val})")
                     valid_loc = True
                 else:
@@ -343,21 +338,17 @@ if st.session_state.order_val and not st.session_state.packing_mode:
                         st.session_state.loc_val = ""
                         st.rerun()
                 
-                # 2.4 ADD TO CART (LOOP)
+                # 2.4 ADD TO CART
                 if valid_loc:
                     st.markdown("---")
-                    # ปุ่มยืนยันเพื่อหยิบใส่ตะกร้า
                     if st.button(f"📥 ยืนยันหยิบชิ้นนี้", type="primary", use_container_width=True):
-                        # Add to list
                         item_data = {
                             "product_id": st.session_state.prod_val,
                             "product_name": prod_name_disp,
                             "location": st.session_state.loc_val,
-                            "time": datetime.now().strftime("%H:%M:%S")
+                            "time": datetime.now(THAI_TZ).strftime("%H:%M:%S")
                         }
                         st.session_state.picked_cart.append(item_data)
-                        
-                        # Clear inputs for next item
                         st.session_state.prod_val = ""
                         st.session_state.loc_val = ""
                         st.session_state.cam_counter += 1
@@ -369,36 +360,27 @@ if st.session_state.order_val and not st.session_state.packing_mode:
     if st.session_state.picked_cart:
         st.divider()
         st.markdown(f"##### 🛒 รายการที่หยิบแล้ว ({len(st.session_state.picked_cart)} ชิ้น)")
-        # Show mini table
         df_cart = pd.DataFrame(st.session_state.picked_cart)
         st.dataframe(df_cart[['product_id', 'location', 'product_name']], use_container_width=True, hide_index=True)
         
         st.divider()
         col_act1, col_act2 = st.columns(2)
-        with col_act1:
-            # ปุ่มนี้จะยังอยู่ในหน้าเดิม เพื่อให้สแกนชิ้นต่อไป
-            st.caption("👆 สแกนชิ้นต่อไปด้านบน")
         with col_act2:
-            # ปุ่มจบงานหยิบ ไปงานแพ็ค
             if st.button("📦 ไปขั้นตอนแพ็คสินค้า ➡️", type="primary", use_container_width=True):
                 st.session_state.packing_mode = True
                 st.rerun()
 
 elif st.session_state.order_val and st.session_state.packing_mode:
-    # >>>>> MODE 2: PACKING (แพ็คและถ่ายรูป) <<<<<
+    # >>>>> MODE 2: PACKING <<<<<
     st.markdown("---")
     st.info("✅ หยิบครบแล้ว เข้าสู่ขั้นตอนแพ็คสินค้า")
     st.markdown(f"#### 3. ถ่ายรูปปิดกล่อง ({len(st.session_state.photo_gallery)}/5)")
     
-    # 3.1 CAMERA (เปลี่ยนมาใช้ st.camera_input มาตรฐาน)
+    # 3.1 CAMERA (***แก้ไข: กลับไปใช้ back_camera_input***)
     if len(st.session_state.photo_gallery) < 5:
         pack_key = f"cam_pack_{st.session_state.cam_counter}"
+        pack_img = back_camera_input("แตะเพื่อถ่ายรูปกล่องสินค้า", key=pack_key) # ใช้ back_camera_input อีกครั้ง
         
-        # --- เปลี่ยนโค้ดตรงนี้ ---
-        # ใช้ st.camera_input มาตรฐานแทน back_camera_input
-        pack_img = st.camera_input("แตะเพื่อถ่ายรูปกล่องสินค้า (ถ้าค้างให้รีโหลด)", key=pack_key)
-        # -----------------------
-
         if pack_img:
             st.session_state.photo_gallery.append(pack_img.getvalue())
             st.session_state.cam_counter += 1
@@ -452,4 +434,3 @@ st.markdown("---")
 if st.button("🔄 ยกเลิกทั้งหมด (Reset)", type="secondary", use_container_width=True):
     reset_all_data()
     st.rerun()
-
