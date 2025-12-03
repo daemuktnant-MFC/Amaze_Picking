@@ -156,7 +156,13 @@ def get_target_folder_structure(service, order_id, main_parent_id):
 def upload_photo(service, file_obj, filename, folder_id):
     try:
         file_metadata = {'name': filename, 'parents': [folder_id]}
-        media = MediaIoBaseUpload(io.BytesIO(file_obj), mimetype='image/jpeg')
+        # แก้ไขให้รองรับทั้ง bytes และ file-like object
+        if isinstance(file_obj, bytes):
+            media_body = io.BytesIO(file_obj)
+        else:
+            media_body = file_obj
+
+        media = MediaIoBaseUpload(media_body, mimetype='image/jpeg', chunksize=1024*1024, resumable=True)
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
         return file.get('id')
     except Exception as e:
@@ -200,7 +206,7 @@ def reset_all_data():
     st.session_state.cam_counter += 1
     st.session_state.cart_items = [] 
     st.session_state.app_mode = "PICKING" 
-    st.session_state.temp_login_user = None # Clear temp user if logout
+    st.session_state.temp_login_user = None
 
 def logout_user():
     st.session_state.current_user_name = ""
@@ -244,7 +250,7 @@ if not st.session_state.current_user_name:
     st.title("🔐 Login พนักงาน")
     df_users = load_sheet_data(USER_SHEET_NAME)
 
-    # STEP 1: Scan/Input User ID
+    # STEP 1: Scan/Input User ID (ยังไม่ได้ระบุตัวตน)
     if st.session_state.temp_login_user is None:
         st.info("กรุณาสแกนรหัสพนักงาน")
         
@@ -264,7 +270,7 @@ if not st.session_state.current_user_name:
                 # Col A = ID, Col B = Pass, Col C = Name
                 match = df_users[df_users.iloc[:, 0].astype(str) == str(user_input_val)]
                 if not match.empty:
-                    # พบ User -> เก็บลง Temp แล้วไปหน้า Password
+                    # พบ User -> เก็บลง Temp แล้วไปหน้า Password (ยังไม่ Login)
                     st.session_state.temp_login_user = {
                         'id': str(user_input_val),
                         'pass': str(match.iloc[0, 1]).strip(), # Password (Column B)
@@ -276,7 +282,7 @@ if not st.session_state.current_user_name:
             else:
                 st.warning("⚠️ โหลดข้อมูลพนักงานไม่ได้")
 
-    # STEP 2: Verify Password
+    # STEP 2: Verify Password (ระบุตัวตนแล้ว รอใส่รหัส)
     else:
         user_info = st.session_state.temp_login_user
         st.info(f"👤 พนักงาน: **{user_info['name']}** ({user_info['id']})")
