@@ -9,7 +9,7 @@ from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
 import time
-import pytz # เพิ่ม Library จัดการ Timezone
+import pytz 
 
 # --- IMPORT LIBRARY กล้อง ---
 try:
@@ -23,11 +23,10 @@ MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 LOG_SHEET_NAME = 'Logs'
 USER_SHEET_NAME = 'User'
-THAI_TZ = pytz.timezone('Asia/Bangkok') # ตั้งค่า Timezone ไทย
+THAI_TZ = pytz.timezone('Asia/Bangkok') 
 
 # --- HELPER: GET THAI TIME ---
 def get_thai_time():
-    """ฟังก์ชันดึงเวลาปัจจุบันแบบไทย"""
     return datetime.now(THAI_TZ)
 
 # --- AUTHENTICATION ---
@@ -88,9 +87,7 @@ def load_sheet_data(sheet_name=0):
         print(f"Sheet Error ({sheet_name}): {e}")
         return pd.DataFrame()
 
-# --- MODIFIED: Save Log with User ID in Col H ---
 def save_log_batch(picker_name, picker_id, order_id, picked_items, file_id):
-    """ฟังก์ชันบันทึก Log แบบ Batch"""
     try:
         creds = get_credentials()
         gc = gspread.authorize(creds)
@@ -105,7 +102,6 @@ def save_log_batch(picker_name, picker_id, order_id, picked_items, file_id):
                 "Pick Qty", "User ID", "Image Link (Col I)"
             ])
             
-        # ใช้เวลาไทย
         timestamp = get_thai_time().strftime("%Y-%m-%d %H:%M:%S")
         image_link = f"https://drive.google.com/open?id={file_id}"
         
@@ -113,14 +109,14 @@ def save_log_batch(picker_name, picker_id, order_id, picked_items, file_id):
         for item in picked_items:
             row = [
                 timestamp,
-                picker_name,   # Col B: ชื่อพนักงาน
-                order_id,      # Col C
+                picker_name,   
+                order_id,      
                 item['barcode'],
                 item['name'],
                 item['location'],
                 item['qty'],
-                picker_id,     # Col H: รหัสพนักงาน (ตามที่ขอ)
-                image_link     # Col I
+                picker_id,     
+                image_link     
             ]
             rows_to_append.append(row)
         
@@ -130,10 +126,10 @@ def save_log_batch(picker_name, picker_id, order_id, picked_items, file_id):
         st.warning(f"⚠️ บันทึก Log ไม่สำเร็จ: {e}")
 
 # ==============================================================================
-# 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED & TZ FIX)
+# 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED)
 # ==============================================================================
 def get_target_folder_structure(service, order_id, main_parent_id):
-    # 1. Folder วันที่ (ใช้เวลาไทย)
+    # 1. Folder วันที่ (Timezone Thai)
     date_folder_name = get_thai_time().strftime("%d-%m-%Y")
     
     q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
@@ -147,7 +143,7 @@ def get_target_folder_structure(service, order_id, main_parent_id):
         date_folder = service.files().create(body=meta_date, fields='id').execute()
         date_folder_id = date_folder.get('id')
         
-    # 2. Folder Order_HH-MM (ใช้เวลาไทย)
+    # 2. Folder Order_HH-MM (Timezone Thai)
     time_suffix = get_thai_time().strftime("%H-%M")
     order_folder_name = f"{order_id}_{time_suffix}"
     
@@ -213,6 +209,20 @@ def logout_user():
 
 # --- UI SETUP ---
 st.set_page_config(page_title="Smart Picking System", page_icon="📦")
+
+# === CSS INJECTION: ปรับขนาดกล้อง ===
+st.markdown("""
+<style>
+/* บังคับขยาย iframe ของ back_camera_input ให้สูงขึ้น */
+iframe[title="streamlit_back_camera_input.back_camera_input"] {
+    min-height: 450px !important;  /* เพิ่มความสูงขั้นต่ำ (จากเดิมมักจะ 300px) */
+    transform: scale(1.1); /* ขยาย Scale เล็กน้อยเพื่อให้เต็มตา */
+    transform-origin: top center;
+    margin-bottom: 20px;
+}
+</style>
+""", unsafe_allow_html=True)
+# ==================================
 
 # Init Session State
 if 'current_user_name' not in st.session_state: st.session_state.current_user_name = ""
