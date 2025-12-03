@@ -17,6 +17,24 @@ except ImportError:
     st.error("⚠️ ต้องเพิ่ม 'streamlit-back-camera-input' ใน requirements.txt")
     st.stop()
 
+# --- CSS HACK: ขยายความสูงกล้อง 50% ---
+st.markdown(
+    """
+    <style>
+    /* ขยายความสูงของ iframe ที่รันกล้อง (ปรับค่า min-height ให้สูงขึ้น) */
+    iframe[title="streamlit_back_camera_input.back_camera_input"] {
+        min-height: 250px !important; 
+        height: 150% !important;
+    }
+    /* ปรับแต่งตารางให้ดูง่ายขึ้น */
+    div[data-testid="stDataFrame"] {
+        width: 100%;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 # --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
@@ -206,7 +224,6 @@ def upload_photo(service, file_obj, filename, folder_id):
 
 # --- RESET FUNCTIONS ---
 def reset_for_next_item():
-    # รีเซ็ตเฉพาะช่อง input เพื่อสแกนตัวต่อไป
     st.session_state.prod_val = ""
     st.session_state.loc_val = ""
     st.session_state.prod_display_name = ""
@@ -214,11 +231,11 @@ def reset_for_next_item():
     st.session_state.cam_counter += 1
 
 def reset_all_data():
-    # รีเซ็ตทุกอย่างเมื่อจบ Order
     st.session_state.order_val = ""
-    st.session_state.current_order_items = [] # ล้างตะกร้าสินค้า
-    st.session_state.photo_gallery = [] # ล้างรูป
+    st.session_state.current_order_items = []
+    st.session_state.photo_gallery = [] 
     st.session_state.rider_photo = None
+    st.session_state.picking_phase = 'scan' # Reset กลับไปเฟสแรก
     reset_for_next_item()
 
 def logout_user():
@@ -232,13 +249,15 @@ st.set_page_config(page_title="Smart Picking System", page_icon="📦")
 
 # Init Session State
 keys = ['current_user_name', 'current_user_id', 'order_val', 'prod_val', 'loc_val', 
-        'prod_display_name', 'photo_gallery', 'cam_counter', 'pick_qty', 'rider_photo', 'current_order_items']
+        'prod_display_name', 'photo_gallery', 'cam_counter', 'pick_qty', 'rider_photo', 
+        'current_order_items', 'picking_phase']
 for k in keys:
     if k not in st.session_state: 
         if k == 'pick_qty': st.session_state[k] = 1
         elif k == 'cam_counter': st.session_state[k] = 0
         elif k == 'photo_gallery': st.session_state[k] = []
-        elif k == 'current_order_items': st.session_state[k] = [] # List เก็บรายการสินค้าที่จะแพ็ค
+        elif k == 'current_order_items': st.session_state[k] = []
+        elif k == 'picking_phase': st.session_state[k] = 'scan' # 'scan' or 'pack'
         else: st.session_state[k] = ""
 
 # --- LOGIN ---
@@ -281,154 +300,172 @@ else:
             logout_user()
 
     # =====================================================
-    # MODE 1: PACKING (MULTI-ITEM SCAN)
+    # MODE 1: PACKING (SPLIT PHASE: SCAN -> PACK)
     # =====================================================
     if mode == "📦 แผนกแพ็คสินค้า":
-        st.title("📦 ระบบเบิก-แพ็คสินค้า (รวมยอด)")
+        st.title("📦 ระบบเบิก-แพ็คสินค้า")
         
         df_items = load_sheet_data(0)
         if not df_items.empty and 'Barcode' not in df_items.columns:
             st.error("❌ ไม่พบคอลัมน์ 'Barcode' ใน Sheet!")
             st.stop()
 
-        # 1. ORDER
-        st.markdown("#### 1. Order ID")
-        if not st.session_state.order_val:
-            col1, col2 = st.columns([3, 1])
-            manual_order = col1.text_input("พิมพ์ Order ID", key="pack_order_man").strip().upper()
-            if manual_order:
-                st.session_state.order_val = manual_order
-                st.rerun()
-            
-            scan_order = back_camera_input("แตะเพื่อสแกน Order", key=f"pack_cam_{st.session_state.cam_counter}")
-            if scan_order:
-                res = decode(Image.open(scan_order))
-                if res:
-                    st.session_state.order_val = res[0].data.decode("utf-8").upper()
-                    st.rerun()
-        else:
-            c1, c2 = st.columns([3, 1])
-            with c1: st.success(f"📦 Order: **{st.session_state.order_val}**")
-            with c2: 
-                if st.button("เปลี่ยน Order/เคลียร์รายการ"): reset_all_data(); st.rerun()
-
-        # 2. SCAN ITEMS LOOP
-        if st.session_state.order_val:
-            st.markdown("---")
-            st.markdown("#### 2. เพิ่มรายการสินค้า (Scan & Add)")
-            
-            # --- Input Section ---
-            if not st.session_state.prod_val:
+        # -----------------------------------------------
+        # PHASE 1: SCANNING (สแกนของจนครบ)
+        # -----------------------------------------------
+        if st.session_state.picking_phase == 'scan':
+            # 1. ORDER
+            st.markdown("#### 1. Order ID")
+            if not st.session_state.order_val:
                 col1, col2 = st.columns([3, 1])
-                manual_prod = col1.text_input("พิมพ์ Barcode", key="pack_prod_man").strip()
-                if manual_prod: st.session_state.prod_val = manual_prod; st.rerun()
+                manual_order = col1.text_input("พิมพ์ Order ID", key="pack_order_man").strip().upper()
+                if manual_order:
+                    st.session_state.order_val = manual_order
+                    st.rerun()
                 
-                scan_prod = back_camera_input("แตะเพื่อสแกนสินค้า", key=f"prod_cam_{st.session_state.cam_counter}")
-                if scan_prod:
-                    res_p = decode(Image.open(scan_prod))
-                    if res_p: st.session_state.prod_val = res_p[0].data.decode("utf-8"); st.rerun()
+                scan_order = back_camera_input("แตะเพื่อสแกน Order", key=f"pack_cam_{st.session_state.cam_counter}")
+                if scan_order:
+                    res = decode(Image.open(scan_order))
+                    if res:
+                        st.session_state.order_val = res[0].data.decode("utf-8").upper()
+                        st.rerun()
             else:
-                # Item Verification Logic
-                target_loc_str = None
-                prod_found = False
-                if not df_items.empty:
-                    match = df_items[df_items['Barcode'] == st.session_state.prod_val]
-                    if not match.empty:
-                        prod_found = True
-                        row = match.iloc[0]
-                        try:
-                            brand = str(row.iloc[3]); variant = str(row.iloc[5])
-                            full_name = f"{brand} {variant}"
-                        except: full_name = "Error Name"
-                        st.session_state.prod_display_name = full_name
-                        target_loc_str = f"{str(row.get('Zone','')).strip()}-{str(row.get('Location','')).strip()}"
-                        st.success(f"✅ **{full_name}**"); st.warning(f"📍 เป้าหมาย: **{target_loc_str}**")
-                    else: st.error("❌ ไม่พบ Barcode")
-                else: st.warning("⚠️ Loading Data...")
-                
-                if st.button("❌ ยกเลิก/สแกนใหม่"): reset_for_next_item(); st.rerun()
+                c1, c2 = st.columns([3, 1])
+                with c1: st.success(f"📦 Order: **{st.session_state.order_val}**")
+                with c2: 
+                    if st.button("เปลี่ยน Order"): reset_all_data(); st.rerun()
 
-                # Location Verify
-                if prod_found and target_loc_str:
-                    st.markdown("---")
-                    st.markdown("##### ยืนยัน Location")
-                    if not st.session_state.loc_val:
-                        man_loc = st.text_input("Scan/พิมพ์ Location", key="loc_man").strip().upper()
-                        if man_loc: st.session_state.loc_val = man_loc; st.rerun()
-                        scan_loc = back_camera_input("แตะเพื่อสแกน Location", key=f"loc_cam_{st.session_state.cam_counter}")
-                        if scan_loc:
-                            res_l = decode(Image.open(scan_loc))
-                            if res_l: st.session_state.loc_val = res_l[0].data.decode("utf-8").upper(); st.rerun()
-                    else:
-                        if st.session_state.loc_val == target_loc_str or st.session_state.loc_val in target_loc_str:
-                            st.success(f"✅ ถูกต้อง: {st.session_state.loc_val}")
-                            
-                            # Qty Input
-                            st.markdown("---")
-                            st.markdown("##### ระบุจำนวน")
-                            st.session_state.pick_qty = st.number_input("จำนวน (Qty)", min_value=1, value=1)
-                            
-                            # ปุ่ม Add to Basket
-                            st.markdown("---")
-                            if st.button("➕ เพิ่มรายการลงตะกร้า", type="primary", use_container_width=True):
-                                # Save logic to session state list
-                                new_item = {
-                                    "Barcode": st.session_state.prod_val,
-                                    "Product Name": st.session_state.prod_display_name,
-                                    "Location": st.session_state.loc_val,
-                                    "Qty": st.session_state.pick_qty
-                                }
-                                st.session_state.current_order_items.append(new_item)
-                                st.toast(f"เพิ่ม {st.session_state.prod_display_name} แล้ว!", icon="🛒")
-                                reset_for_next_item() # เคลียร์ช่อง Input เพื่อสแกนตัวต่อไป
-                                st.rerun()
-                        else:
-                            st.error(f"❌ ผิดตำแหน่ง ({st.session_state.loc_val})")
-                            if st.button("แก้ Location"): st.session_state.loc_val = ""; st.rerun()
-
-            # 3. BASKET & FINAL CONFIRMATION
-            if st.session_state.current_order_items:
+            # 2. SCAN ITEMS LOOP
+            if st.session_state.order_val:
                 st.markdown("---")
-                st.markdown(f"### 🛒 รายการที่รอแพ็ค ({len(st.session_state.current_order_items)} รายการ)")
-                st.dataframe(pd.DataFrame(st.session_state.current_order_items), use_container_width=True)
+                st.markdown("#### 2. เพิ่มรายการสินค้า (Scan & Add)")
                 
-                st.markdown("#### 4. ถ่ายรูปปิดกล่อง (รวมทุกชิ้น)")
-                
-                # Camera Logic (เหมือนเดิม)
-                if st.session_state.photo_gallery:
-                    cols = st.columns(5)
-                    for idx, img in enumerate(st.session_state.photo_gallery):
-                        with cols[idx]:
-                            st.image(img, use_column_width=True)
-                            if st.button("🗑️", key=f"del_{idx}"): st.session_state.photo_gallery.pop(idx); st.rerun()
-                
-                if len(st.session_state.photo_gallery) < 5:
-                    pack_img = back_camera_input("ถ่ายรูปสินค้ากองรวม (กล้องหลัง)", key=f"pack_cam_fin_{st.session_state.cam_counter}")
-                    if pack_img:
-                        img_pil = Image.open(pack_img)
-                        if img_pil.mode in ("RGBA", "P"): img_pil = img_pil.convert("RGB")
-                        buf = io.BytesIO(); img_pil.save(buf, format='JPEG')
-                        st.session_state.photo_gallery.append(buf.getvalue())
-                        st.session_state.cam_counter += 1; st.rerun()
-                
-                # FINAL UPLOAD BUTTON
+                # Input
+                if not st.session_state.prod_val:
+                    col1, col2 = st.columns([3, 1])
+                    manual_prod = col1.text_input("พิมพ์ Barcode", key="pack_prod_man").strip()
+                    if manual_prod: st.session_state.prod_val = manual_prod; st.rerun()
+                    
+                    # กล้อง Scan (ที่ขยาย 50% แล้วด้วย CSS ด้านบน)
+                    scan_prod = back_camera_input("แตะเพื่อสแกนสินค้า", key=f"prod_cam_{st.session_state.cam_counter}")
+                    if scan_prod:
+                        res_p = decode(Image.open(scan_prod))
+                        if res_p: st.session_state.prod_val = res_p[0].data.decode("utf-8"); st.rerun()
+                else:
+                    # Verify
+                    target_loc_str = None
+                    prod_found = False
+                    if not df_items.empty:
+                        match = df_items[df_items['Barcode'] == st.session_state.prod_val]
+                        if not match.empty:
+                            prod_found = True
+                            row = match.iloc[0]
+                            try:
+                                brand = str(row.iloc[3]); variant = str(row.iloc[5])
+                                full_name = f"{brand} {variant}"
+                            except: full_name = "Error Name"
+                            st.session_state.prod_display_name = full_name
+                            target_loc_str = f"{str(row.get('Zone','')).strip()}-{str(row.get('Location','')).strip()}"
+                            st.success(f"✅ **{full_name}**"); st.warning(f"📍 เป้าหมาย: **{target_loc_str}**")
+                        else: st.error("❌ ไม่พบ Barcode")
+                    else: st.warning("⚠️ Loading Data...")
+                    
+                    if st.button("❌ สแกนใหม่"): reset_for_next_item(); st.rerun()
+
+                    # Location & Qty
+                    if prod_found and target_loc_str:
+                        st.markdown("---")
+                        st.markdown("##### ยืนยัน Location")
+                        if not st.session_state.loc_val:
+                            man_loc = st.text_input("Scan/พิมพ์ Location", key="loc_man").strip().upper()
+                            if man_loc: st.session_state.loc_val = man_loc; st.rerun()
+                            scan_loc = back_camera_input("แตะเพื่อสแกน Location", key=f"loc_cam_{st.session_state.cam_counter}")
+                            if scan_loc:
+                                res_l = decode(Image.open(scan_loc))
+                                if res_l: st.session_state.loc_val = res_l[0].data.decode("utf-8").upper(); st.rerun()
+                        else:
+                            if st.session_state.loc_val == target_loc_str or st.session_state.loc_val in target_loc_str:
+                                st.success(f"✅ ถูกต้อง: {st.session_state.loc_val}")
+                                st.markdown("##### ระบุจำนวน")
+                                st.session_state.pick_qty = st.number_input("จำนวน (Qty)", min_value=1, value=1)
+                                
+                                st.markdown("---")
+                                if st.button("➕ เพิ่มลงตะกร้า", type="primary", use_container_width=True):
+                                    new_item = {
+                                        "Barcode": st.session_state.prod_val,
+                                        "Product Name": st.session_state.prod_display_name,
+                                        "Location": st.session_state.loc_val,
+                                        "Qty": st.session_state.pick_qty
+                                    }
+                                    st.session_state.current_order_items.append(new_item)
+                                    st.toast(f"เพิ่ม {st.session_state.prod_display_name} แล้ว!", icon="🛒")
+                                    reset_for_next_item()
+                                    st.rerun()
+                            else:
+                                st.error(f"❌ ผิดตำแหน่ง ({st.session_state.loc_val})")
+                                if st.button("แก้ Location"): st.session_state.loc_val = ""; st.rerun()
+
+                # BASKET & CONFIRM BUTTON
+                if st.session_state.current_order_items:
+                    st.markdown("---")
+                    st.markdown(f"### 🛒 ตะกร้าสินค้า ({len(st.session_state.current_order_items)} รายการ)")
+                    st.dataframe(pd.DataFrame(st.session_state.current_order_items), use_container_width=True)
+                    
+                    # ปุ่มเปลี่ยนไป Phase 2
+                    if st.button("✅ ยืนยันรายการครบแล้ว (ไปถ่ายรูป)", type="primary", use_container_width=True):
+                        st.session_state.picking_phase = 'pack'
+                        st.rerun()
+
+        # -----------------------------------------------
+        # PHASE 2: PACKING (ถ่ายรูป & Upload)
+        # -----------------------------------------------
+        elif st.session_state.picking_phase == 'pack':
+            st.success(f"📦 Order: **{st.session_state.order_val}** (ยืนยันแล้ว)")
+            
+            # Show Basket (Read only)
+            st.info("รายการสินค้าที่จะแพ็ค:")
+            st.dataframe(pd.DataFrame(st.session_state.current_order_items), use_container_width=True)
+            
+            st.markdown("#### 4. ถ่ายรูปปิดกล่อง (รวมทุกชิ้น)")
+            
+            if st.session_state.photo_gallery:
+                cols = st.columns(5)
+                for idx, img in enumerate(st.session_state.photo_gallery):
+                    with cols[idx]:
+                        st.image(img, use_column_width=True)
+                        if st.button("🗑️", key=f"del_{idx}"): st.session_state.photo_gallery.pop(idx); st.rerun()
+            
+            if len(st.session_state.photo_gallery) < 5:
+                # กล้องถ่ายรูปแพ็ค (CSS Apply here too)
+                pack_img = back_camera_input("ถ่ายรูปสินค้ากองรวม (กล้องหลัง)", key=f"pack_cam_fin_{st.session_state.cam_counter}")
+                if pack_img:
+                    img_pil = Image.open(pack_img)
+                    if img_pil.mode in ("RGBA", "P"): img_pil = img_pil.convert("RGB")
+                    buf = io.BytesIO(); img_pil.save(buf, format='JPEG')
+                    st.session_state.photo_gallery.append(buf.getvalue())
+                    st.session_state.cam_counter += 1; st.rerun()
+            
+            col_b1, col_b2 = st.columns([1, 1])
+            with col_b1:
+                if st.button("⬅️ กลับไปแก้ไขรายการ"):
+                    st.session_state.picking_phase = 'scan'
+                    st.rerun()
+            with col_b2:
                 if len(st.session_state.photo_gallery) > 0:
-                    if st.button("☁️ ยืนยันแพ็ค & อัปโหลดทั้งหมด", type="primary", use_container_width=True):
-                        with st.spinner("กำลังบันทึกข้อมูลและอัปโหลด..."):
+                    if st.button("☁️ ยืนยัน Upload ทั้งหมด", type="primary", use_container_width=True):
+                        with st.spinner("กำลังบันทึกข้อมูล..."):
                             srv = authenticate_drive()
                             if srv:
-                                # 1. Create/Get Folder
                                 fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
                                 ts = get_thai_ts_filename()
                                 first_id = ""
                                 
-                                # 2. Upload Photos (Once)
                                 for i, b in enumerate(st.session_state.photo_gallery):
                                     fn = f"{st.session_state.order_val}_PACKED_{ts}_Img{i+1}.jpg"
                                     uid = upload_photo(srv, b, fn, fid)
-                                    if i==0: first_id = uid # ใช้รูปแรกเป็นตัวแทนลิงก์
+                                    if i==0: first_id = uid 
                                 
-                                # 3. Loop Save Logs for each item in basket
+                                # Loop Save Logs
                                 for item in st.session_state.current_order_items:
                                     save_log_to_sheet(
                                         st.session_state.current_user_name,
@@ -437,14 +474,14 @@ else:
                                         item['Product Name'],
                                         item['Location'],
                                         item['Qty'],
-                                        st.session_state.current_user_name, # User Col H
+                                        st.session_state.current_user_name,
                                         first_id
                                     )
                                 
                                 st.balloons()
                                 st.success("✅ บันทึกครบทุกรายการเรียบร้อย!")
                                 time.sleep(2)
-                                reset_all_data() # เคลียร์ทุกอย่างเริ่ม Order ใหม่
+                                reset_all_data() 
                                 st.rerun()
 
     # =====================================================
