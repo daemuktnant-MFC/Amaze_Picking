@@ -4,7 +4,7 @@ import gspread
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-from datetime import datetime
+from datetime import datetime, timedelta
 from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
@@ -90,6 +90,17 @@ def load_sheet_data(sheet_name=0):
     except Exception as e:
         return pd.DataFrame()
 
+# --- ฟังก์ชันจัดการเวลาไทย (UTC+7) ---
+def get_thai_time():
+    # บวก 7 ชั่วโมงจากเวลา UTC
+    return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+def get_thai_date_str():
+    return (datetime.utcnow() + timedelta(hours=7)).strftime("%d-%m-%Y")
+def get_thai_time_suffix():
+    return (datetime.utcnow() + timedelta(hours=7)).strftime("%H-%M")
+def get_thai_ts_filename():
+    return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y%m%d_%H%M%S")
+
 def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_qty, file_id):
     try:
         creds = get_credentials()
@@ -99,11 +110,25 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
             worksheet = sh.worksheet(LOG_SHEET_NAME)
         except:
             worksheet = sh.add_worksheet(title=LOG_SHEET_NAME, rows="1000", cols="20")
-            worksheet.append_row(["Timestamp", "Picker Name", "Order ID", "Barcode", "Product Name", "Location", "Pick Qty", "Reserved", "Image Link (Col I)"])
+            # Header
+            worksheet.append_row(["Timestamp", "Picker Name", "Order ID", "Barcode", "Product Name", "Location", "Pick Qty", "User", "Image Link (Col I)"])
             
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = get_thai_time() # ใช้เวลาไทย
         image_link = f"https://drive.google.com/open?id={file_id}"
-        row_data = [timestamp, picker_name, order_id, barcode, prod_name, location, pick_qty, "", image_link]
+        
+        # Row Data (User ลง Column H)
+        # A=Time, B=Picker, C=Order, D=Barcode, E=ProdName, F=Location, G=Qty, H=User, I=Link
+        row_data = [
+            timestamp, 
+            picker_name, 
+            order_id, 
+            barcode, 
+            prod_name, 
+            location, 
+            pick_qty, 
+            picker_name, # Column H: User (ใช้ชื่อ Picker บันทึกซ้ำ)
+            image_link
+        ]
         worksheet.append_row(row_data)
     except Exception as e:
         st.warning(f"⚠️ บันทึก Log ไม่สำเร็จ: {e}")
@@ -119,17 +144,19 @@ def save_rider_log(picker_name, order_id, file_id, folder_name):
             worksheet = sh.add_worksheet(title=RIDER_SHEET_NAME, rows="1000", cols="10")
             worksheet.append_row(["Timestamp", "User Name", "Order ID", "Folder Name", "Rider Image Link"])
             
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = get_thai_time() # ใช้เวลาไทย
         image_link = f"https://drive.google.com/open?id={file_id}"
         worksheet.append_row([timestamp, picker_name, order_id, folder_name, image_link])
     except Exception as e:
         st.warning(f"⚠️ บันทึก Rider Log ไม่สำเร็จ: {e}")
 
 # ==============================================================================
-# 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED)
+# 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED & SECURED)
 # ==============================================================================
 def get_target_folder_structure(service, order_id, main_parent_id):
-    date_folder_name = datetime.now().strftime("%d-%m-%Y")
+    # ใช้เวลาไทยในการสร้างชื่อ Folder
+    date_folder_name = get_thai_date_str()
+    
     q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res_date = service.files().list(q=q_date, fields="files(id)").execute()
     files_date = res_date.get('files', [])
@@ -141,7 +168,7 @@ def get_target_folder_structure(service, order_id, main_parent_id):
         date_folder = service.files().create(body=meta_date, fields='id').execute()
         date_folder_id = date_folder.get('id')
         
-    time_suffix = datetime.now().strftime("%H-%M")
+    time_suffix = get_thai_time_suffix()
     order_folder_name = f"{order_id}_{time_suffix}"
     
     meta_order = {'name': order_folder_name, 'parents': [date_folder_id], 'mimeType': 'application/vnd.google-apps.folder'}
@@ -153,7 +180,7 @@ def get_target_folder_structure(service, order_id, main_parent_id):
 # ==============================================================================
 
 def find_existing_order_folder(service, order_id, main_parent_id):
-    date_folder_name = datetime.now().strftime("%d-%m-%Y")
+    date_folder_name = get_thai_date_str() # ใช้เวลาไทยค้นหา
     q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res_date = service.files().list(q=q_date, fields="files(id)").execute()
     files_date = res_date.get('files', [])
@@ -192,12 +219,14 @@ def reset_for_next_item():
 
 def reset_all_data():
     st.session_state.order_val = ""
+    st.session_state.picked_items_list = [] # Clear รายการสินค้าเมื่อเปลี่ยน Order
     st.session_state.rider_photo = None
     reset_for_next_item()
 
 def logout_user():
     st.session_state.current_user_name = ""
     st.session_state.current_user_id = ""
+    st.session_state.picked_items_list = []
     reset_all_data()
     st.rerun()
 
@@ -205,12 +234,13 @@ def logout_user():
 st.set_page_config(page_title="Smart Picking System", page_icon="📦")
 
 keys = ['current_user_name', 'current_user_id', 'order_val', 'prod_val', 'loc_val', 
-        'prod_display_name', 'photo_gallery', 'cam_counter', 'pick_qty', 'rider_photo']
+        'prod_display_name', 'photo_gallery', 'cam_counter', 'pick_qty', 'rider_photo', 'picked_items_list']
 for k in keys:
     if k not in st.session_state: 
         if k == 'pick_qty': st.session_state[k] = 1
         elif k == 'cam_counter': st.session_state[k] = 0
         elif k == 'photo_gallery': st.session_state[k] = []
+        elif k == 'picked_items_list': st.session_state[k] = [] # List เก็บรายการสินค้าที่หยิบแล้ว
         else: st.session_state[k] = ""
 
 # --- LOGIN ---
@@ -350,11 +380,9 @@ else:
                                 pack_img = back_camera_input("ถ่ายรูปสินค้า (กล้องหลัง)", key=f"pack_cam_fin_{st.session_state.cam_counter}")
                                 if pack_img:
                                     img_pil = Image.open(pack_img)
-                                    # --- แก้ไข OSError ตรงนี้ ---
-                                    # แปลง RGBA เป็น RGB ก่อนบันทึกเป็น JPEG
+                                    # Fix OSError: Convert RGBA to RGB
                                     if img_pil.mode in ("RGBA", "P"):
                                         img_pil = img_pil.convert("RGB")
-                                    # --------------------------
                                     buf = io.BytesIO(); img_pil.save(buf, format='JPEG')
                                     st.session_state.photo_gallery.append(buf.getvalue())
                                     st.session_state.cam_counter += 1; st.rerun()
@@ -365,20 +393,36 @@ else:
                                         srv = authenticate_drive()
                                         if srv:
                                             fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
-                                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                            ts = get_thai_ts_filename()
                                             first_id = ""
                                             for i, b in enumerate(st.session_state.photo_gallery):
                                                 fn = f"{st.session_state.order_val}_{st.session_state.prod_val}_{ts}_Img{i+1}.jpg"
                                                 uid = upload_photo(srv, b, fn, fid)
                                                 if i==0: first_id = uid
+                                            
+                                            # บันทึก Log
                                             save_log_to_sheet(st.session_state.current_user_name, st.session_state.order_val, 
                                                               st.session_state.prod_val, st.session_state.prod_display_name, 
                                                               st.session_state.loc_val, st.session_state.pick_qty, first_id)
+                                            
+                                            # อัปเดตรายการที่หยิบแล้ว
+                                            st.session_state.picked_items_list.append({
+                                                "Product Name": st.session_state.prod_display_name,
+                                                "Qty": st.session_state.pick_qty,
+                                                "Location": st.session_state.loc_val
+                                            })
+
                                             st.balloons(); st.success("บันทึกสำเร็จ!"); time.sleep(1)
                                             reset_for_next_item(); st.rerun()
                         else:
                             st.error(f"❌ ผิดตำแหน่ง ({st.session_state.loc_val})")
                             if st.button("แก้ Location"): st.session_state.loc_val = ""; st.rerun()
+
+            # --- ส่วนแสดงรายการที่หยิบแล้ว (คืนชีพมาแล้ว!) ---
+            if st.session_state.picked_items_list:
+                st.markdown("---")
+                st.markdown(f"##### 🛒 รายการที่หยิบแล้ว ({len(st.session_state.picked_items_list)} รายการ)")
+                st.dataframe(pd.DataFrame(st.session_state.picked_items_list), use_container_width=True)
 
     # =====================================================
     # MODE 2: RIDER HANDOVER
@@ -428,7 +472,7 @@ else:
                 if st.button("🚀 ยืนยันส่งรูปนี้", type="primary"):
                     with st.spinner("Uploading..."):
                         srv = authenticate_drive()
-                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        ts = get_thai_ts_filename()
                         fn = f"RIDER_{st.session_state.order_val}_{ts}.jpg"
                         
                         uid = upload_photo(srv, rider_img_input, fn, st.session_state.target_rider_folder_id)
