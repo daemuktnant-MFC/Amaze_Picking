@@ -215,7 +215,16 @@ def find_existing_order_folder(service, order_id, main_parent_id):
 def upload_photo(service, file_obj, filename, folder_id):
     try:
         file_metadata = {'name': filename, 'parents': [folder_id]}
-        media = MediaIoBaseUpload(io.BytesIO(file_obj), mimetype='image/jpeg')
+        
+        # 💡 การแก้ไข: ใช้วัตถุ file_obj โดยตรง ซึ่งมักจะเป็น BytesIO/UploadedFile อยู่แล้ว
+        # ถ้าหากมันเป็น BytesIO/UploadedFile (ซึ่งมักจะเป็นสิ่งที่ back_camera_input คืนมา)
+        # เราสามารถใช้มันตรงๆ ได้เลย
+        media = MediaIoBaseUpload(file_obj, mimetype='image/jpeg', chunksize=1024*1024, resumable=True)
+        
+        # อีกทางเลือกคือการอ่านข้อมูลเป็น Bytes ก่อน (แต่จะโหลดทั้งไฟล์เข้า RAM)
+        # file_bytes = file_obj.read()
+        # media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='image/jpeg')
+        
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
         return file.get('id')
     except Exception as e:
