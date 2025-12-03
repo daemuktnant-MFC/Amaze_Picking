@@ -200,6 +200,7 @@ def reset_all_data():
     st.session_state.cam_counter += 1
     st.session_state.cart_items = [] 
     st.session_state.app_mode = "PICKING" 
+    st.session_state.temp_login_user = None # Clear temp user if logout
 
 def logout_user():
     st.session_state.current_user_name = ""
@@ -236,40 +237,70 @@ if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
 if 'pick_qty' not in st.session_state: st.session_state.pick_qty = 1 
 if 'cart_items' not in st.session_state: st.session_state.cart_items = [] 
 if 'app_mode' not in st.session_state: st.session_state.app_mode = "PICKING" 
+if 'temp_login_user' not in st.session_state: st.session_state.temp_login_user = None
 
-# --- PART 1: LOGIN ---
+# --- PART 1: LOGIN (Modified to include Password check) ---
 if not st.session_state.current_user_name:
     st.title("🔐 Login พนักงาน")
-    st.info("กรุณาสแกนรหัสพนักงาน")
-    
     df_users = load_sheet_data(USER_SHEET_NAME)
-    
-    col1, col2 = st.columns([3, 1])
-    manual_user = col1.text_input("พิมพ์รหัสพนักงาน", key="input_user_manual").strip()
-    
-    cam_key_user = f"cam_user_{st.session_state.cam_counter}"
-    scan_user = back_camera_input("แตะเพื่อสแกนบัตรพนักงาน", key=cam_key_user)
-    
-    user_input_val = None
-    if manual_user: user_input_val = manual_user
-    elif scan_user:
-        res_u = decode(Image.open(scan_user))
-        if res_u: user_input_val = res_u[0].data.decode("utf-8")
-    
-    if user_input_val:
-        if not df_users.empty:
-            match = df_users[df_users.iloc[:, 0].astype(str) == str(user_input_val)]
-            if not match.empty:
-                found_name = match.iloc[0, 2]
-                st.session_state.current_user_id = user_input_val
-                st.session_state.current_user_name = found_name
-                st.toast(f"ยินดีต้อนรับคุณ {found_name} 👋", icon="✅")
-                time.sleep(1)
-                st.rerun()
+
+    # STEP 1: Scan/Input User ID
+    if st.session_state.temp_login_user is None:
+        st.info("กรุณาสแกนรหัสพนักงาน")
+        
+        col1, col2 = st.columns([3, 1])
+        manual_user = col1.text_input("พิมพ์รหัสพนักงาน", key="input_user_manual").strip()
+        cam_key_user = f"cam_user_{st.session_state.cam_counter}"
+        scan_user = back_camera_input("แตะเพื่อสแกนบัตรพนักงาน", key=cam_key_user)
+        
+        user_input_val = None
+        if manual_user: user_input_val = manual_user
+        elif scan_user:
+            res_u = decode(Image.open(scan_user))
+            if res_u: user_input_val = res_u[0].data.decode("utf-8")
+        
+        if user_input_val:
+            if not df_users.empty:
+                # Col A = ID, Col B = Pass, Col C = Name
+                match = df_users[df_users.iloc[:, 0].astype(str) == str(user_input_val)]
+                if not match.empty:
+                    # พบ User -> เก็บลง Temp แล้วไปหน้า Password
+                    st.session_state.temp_login_user = {
+                        'id': str(user_input_val),
+                        'pass': str(match.iloc[0, 1]).strip(), # Password (Column B)
+                        'name': match.iloc[0, 2]               # Name (Column C)
+                    }
+                    st.rerun()
+                else:
+                    st.error(f"❌ ไม่พบรหัสพนักงาน: {user_input_val}")
             else:
-                st.error(f"❌ ไม่พบรหัสพนักงาน: {user_input_val}")
-        else:
-            st.warning("⚠️ โหลดข้อมูลพนักงานไม่ได้")
+                st.warning("⚠️ โหลดข้อมูลพนักงานไม่ได้")
+
+    # STEP 2: Verify Password
+    else:
+        user_info = st.session_state.temp_login_user
+        st.info(f"👤 พนักงาน: **{user_info['name']}** ({user_info['id']})")
+        
+        password_input = st.text_input("🔑 กรุณากรอกรหัสผ่าน", type="password", key="login_pass_input").strip()
+        
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            if st.button("✅ ยืนยัน Login", type="primary", use_container_width=True):
+                # ตรวจสอบ Password
+                if password_input == user_info['pass']:
+                    st.session_state.current_user_id = user_info['id']
+                    st.session_state.current_user_name = user_info['name']
+                    st.session_state.temp_login_user = None # เคลียร์ Temp
+                    st.toast(f"ยินดีต้อนรับคุณ {user_info['name']} 👋", icon="✅")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ รหัสผ่านไม่ถูกต้อง")
+        
+        with c2:
+            if st.button("⬅️ เปลี่ยน User", use_container_width=True):
+                st.session_state.temp_login_user = None
+                st.rerun()
 
 # --- PART 2: MAIN SYSTEM ---
 else:
@@ -450,7 +481,7 @@ else:
                         # 3. Log (User ลง Col H)
                         save_log_batch(
                             st.session_state.current_user_name, # Col B
-                            st.session_state.current_user_id,   # Col H (ที่ขอเพิ่ม)
+                            st.session_state.current_user_id,   # Col H
                             st.session_state.order_val,
                             st.session_state.cart_items, 
                             first_file_id 
@@ -470,4 +501,3 @@ else:
     if st.button("🔄 ยกเลิก / เริ่มใหม่ทั้งหมด", type="secondary"):
         reset_all_data()
         st.rerun()
-
