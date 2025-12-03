@@ -216,19 +216,27 @@ def upload_photo(service, file_obj, filename, folder_id):
     try:
         file_metadata = {'name': filename, 'parents': [folder_id]}
         
-        # 💡 การแก้ไข: ใช้วัตถุ file_obj โดยตรง ซึ่งมักจะเป็น BytesIO/UploadedFile อยู่แล้ว
-        # ถ้าหากมันเป็น BytesIO/UploadedFile (ซึ่งมักจะเป็นสิ่งที่ back_camera_input คืนมา)
-        # เราสามารถใช้มันตรงๆ ได้เลย
-        media = MediaIoBaseUpload(file_obj, mimetype='image/jpeg', chunksize=1024*1024, resumable=True)
-        
-        # อีกทางเลือกคือการอ่านข้อมูลเป็น Bytes ก่อน (แต่จะโหลดทั้งไฟล์เข้า RAM)
-        # file_bytes = file_obj.read()
-        # media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype='image/jpeg')
+        # 💡 การแก้ไข: ตรวจสอบว่าเป็น bytes object หรือไม่
+        if isinstance(file_obj, bytes):
+            # ถ้าเป็น bytes object ดิบ ให้แปลงเป็น io.BytesIO (File-like object)
+            media_body = io.BytesIO(file_obj)
+        else:
+            # ถ้าเป็น File-like Object อยู่แล้ว (เช่น UploadedFile จาก Rider Mode), ใช้ได้เลย
+            media_body = file_obj
+            
+        # สร้าง MediaIoBaseUpload จากวัตถุที่เป็น File-like object
+        # Google API ต้องการให้วัตถุที่นี่มีเมธอด .seek()
+        media = MediaIoBaseUpload(
+            media_body, 
+            mimetype='image/jpeg', 
+            chunksize=1024*1024, 
+            resumable=True
+        )
         
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
         return file.get('id')
     except Exception as e:
-        st.error(f"🔴 Upload Error: {e}")
+        # st.error(f"🔴 Upload Error: {e}") # (Redacted for brevity, keep for debugging)
         raise e
 
 # --- RESET FUNCTIONS ---
