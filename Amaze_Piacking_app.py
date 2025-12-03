@@ -491,7 +491,7 @@ else:
                                         item['Product Name'],
                                         item['Location'],
                                         item['Qty'],
-                                        st.session_state.current_user_name,
+                                        st.session_state.current_user_id,
                                         first_id
                                     )
                                 
