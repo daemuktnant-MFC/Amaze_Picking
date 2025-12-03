@@ -53,7 +53,7 @@ def authenticate_drive():
         st.error(f"Error Drive: {e}")
         return None
 
-# --- GOOGLE SERVICES (แก้ใหม่ ให้ทนทานต่อชื่อคอลัมน์) ---
+# --- GOOGLE SERVICES ---
 @st.cache_data(ttl=600)
 def load_sheet_data(sheet_name=0): 
     try:
@@ -73,27 +73,21 @@ def load_sheet_data(sheet_name=0):
             data = rows[1:]
             df = pd.DataFrame(data, columns=headers)
             
-            # --- FIX: ทำความสะอาดชื่อคอลัมน์ ---
-            # 1. ตัดช่องว่างหน้า-หลังทิ้งให้หมด (เช่น "Barcode " -> "Barcode")
+            # Cleaning Columns
             df.columns = df.columns.str.strip()
-            
-            # 2. แปลง Barcode และ ID ให้เป็นตัวหนังสือ (กันเลขเพี้ยน)
             for col in df.columns:
-                # เช็คแบบ Case Insensitive (ตัวใหญ่ตัวเล็กไม่สน)
                 if 'barcode' in col.lower() or 'id' in col.lower(): 
                     df[col] = df[col].astype(str).str.replace(r'\.0$', '', regex=True)
             
-            # 3. เช็คว่ามีคอลัมน์ Barcode จริงไหม ถ้าไม่มีลองหาตัวใกล้เคียง
             if 'Barcode' not in df.columns:
                 for col in df.columns:
-                    if col.lower() == 'barcode': # เจอแบบตัวเล็ก
+                    if col.lower() == 'barcode':
                         df.rename(columns={col: 'Barcode'}, inplace=True)
                         break
                         
             return df
         return pd.DataFrame()
     except Exception as e:
-        # print(f"Sheet Error ({sheet_name}): {e}") 
         return pd.DataFrame()
 
 def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_qty, file_id):
@@ -264,13 +258,10 @@ else:
     if mode == "📦 แผนกแพ็คสินค้า":
         st.title("📦 ระบบเบิก-แพ็คสินค้า")
         
-        # Load โดยใช้ Index 0 (หน้าแรกสุด)
         df_items = load_sheet_data(0)
 
-        # DEBUG: เช็คว่าโหลดคอลัมน์อะไรมาบ้าง
         if not df_items.empty and 'Barcode' not in df_items.columns:
             st.error(f"❌ ไม่พบคอลัมน์ 'Barcode' ใน Sheet แรก! (คอลัมน์ที่เจอ: {list(df_items.columns)})")
-            st.info("💡 คำแนะนำ: ลองเช็คไฟล์ Google Sheet ว่าแผ่นแรกชื่อ 'Item_Data' หรือไม่ และมีหัวตาราง 'Barcode' หรือไม่")
             st.stop()
 
         # 1. ORDER
@@ -312,7 +303,6 @@ else:
                 target_loc_str = None
                 prod_found = False
                 if not df_items.empty:
-                    # ตรงนี้คือจุดที่เคย Error ตอนนี้มีตัวช่วยเรื่องชื่อคอลัมน์แล้ว
                     match = df_items[df_items['Barcode'] == st.session_state.prod_val]
                     if not match.empty:
                         prod_found = True
@@ -360,6 +350,11 @@ else:
                                 pack_img = back_camera_input("ถ่ายรูปสินค้า (กล้องหลัง)", key=f"pack_cam_fin_{st.session_state.cam_counter}")
                                 if pack_img:
                                     img_pil = Image.open(pack_img)
+                                    # --- แก้ไข OSError ตรงนี้ ---
+                                    # แปลง RGBA เป็น RGB ก่อนบันทึกเป็น JPEG
+                                    if img_pil.mode in ("RGBA", "P"):
+                                        img_pil = img_pil.convert("RGB")
+                                    # --------------------------
                                     buf = io.BytesIO(); img_pil.save(buf, format='JPEG')
                                     st.session_state.photo_gallery.append(buf.getvalue())
                                     st.session_state.cam_counter += 1; st.rerun()
