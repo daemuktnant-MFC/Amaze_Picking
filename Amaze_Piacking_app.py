@@ -167,6 +167,7 @@ def upload_photo(service, file_obj, filename, folder_id):
         return file.get('id')
     except Exception as e:
         st.error(f"🔴 Upload Error: {e}")
+        # Re-raise the exception to stop the flow gracefully if needed
         raise e
 
 # --- STATE MANAGEMENT ---
@@ -194,6 +195,7 @@ def finish_picking_mode():
         st.error("⚠️ ยังไม่มีสินค้าในรายการ")
     else:
         st.session_state.app_mode = "PACKING"
+        st.session_state.photo_gallery = [] # Clear any previous gallery (if any)
         st.rerun()
 
 def reset_all_data():
@@ -245,7 +247,7 @@ if 'cart_items' not in st.session_state: st.session_state.cart_items = []
 if 'app_mode' not in st.session_state: st.session_state.app_mode = "PICKING" 
 if 'temp_login_user' not in st.session_state: st.session_state.temp_login_user = None
 
-# --- PART 1: LOGIN (Modified and fixed Logic Flow) ---
+# --- PART 1: LOGIN ---
 if not st.session_state.current_user_name:
     st.title("🔐 Login พนักงาน")
     df_users = load_sheet_data(USER_SHEET_NAME)
@@ -255,7 +257,8 @@ if not st.session_state.current_user_name:
         st.info("กรุณาสแกนรหัสพนักงาน")
         
         col1, col2 = st.columns([3, 1])
-        manual_user = col1.text_input("พิมพ์รหัสพนักงาน", key="input_user_manual").strip()
+        # ใช้ Key ที่แตกต่างกันเพื่อล้างค่า Manual Input หลังจากสแกน/พิมพ์
+        manual_user = col1.text_input("พิมพ์รหัสพนักงาน", key="input_user_manual_step1").strip()
         cam_key_user = f"cam_user_{st.session_state.cam_counter}"
         scan_user = back_camera_input("แตะเพื่อสแกนบัตรพนักงาน", key=cam_key_user)
         
@@ -267,8 +270,9 @@ if not st.session_state.current_user_name:
         
         # ตรวจสอบ ID ที่เพิ่งเข้ามา
         if user_input_val:
-            # *CRITICAL FIX*: ล้างค่า Manual Input เพื่อป้องกันการวนลูป
-            col1.text_input("พิมพ์รหัสพนักงาน", value="", key="input_user_manual_cleared").strip() 
+            # *CRITICAL FIX*: ล้างค่า Manual Input เดิม (ถ้ามี)
+            if 'input_user_manual_step1' in st.session_state:
+                 st.session_state['input_user_manual_step1'] = ""
             
             if not df_users.empty:
                 # Col A = ID, Col B = Pass, Col C = Name
@@ -340,6 +344,35 @@ else:
                 st.rerun()
     else:
         st.success(f"📦 Order: **{st.session_state.order_val}**")
+        st.markdown("---")
+        
+        # --- NEW: MODE SELECTION ---
+        mode_options = {
+            "Picking/Packing": "PICKING",
+            "Delivery Confirmation (Rider)": "DELIVERY"
+        }
+        
+        # ตั้งค่า Mode เริ่มต้นให้สัมพันธ์กับค่าใน session state
+        current_display_mode = "Picking/Packing"
+        if st.session_state.app_mode == "DELIVERY":
+             current_display_mode = "Delivery Confirmation (Rider)"
+
+        selected_mode_display = st.radio(
+            "เลือกขั้นตอนการทำงานสำหรับ Order นี้:",
+            options=list(mode_options.keys()),
+            index=list(mode_options.keys()).index(current_display_mode),
+            key="app_mode_selector_radio",
+            horizontal=True
+        )
+        
+        # เปลี่ยน app_mode เมื่อมีการสลับ
+        new_app_mode = mode_options[selected_mode_display]
+        if new_app_mode != st.session_state.app_mode:
+            st.session_state.app_mode = new_app_mode
+            st.session_state.photo_gallery = [] # Clear gallery when switching mode
+            st.rerun()
+        # --- END NEW: MODE SELECTION ---
+
 
     # ==========================
     # MODE A: PICKING (หยิบของ)
@@ -477,10 +510,10 @@ else:
                 with st.spinner("กำลังสร้าง Folder และอัปโหลด..."):
                     srv = authenticate_drive()
                     if srv:
-                        # 1. สร้าง Folder (ใช้เวลาไทย)
+                        # 1. สร้าง Folder 
                         target_fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
                         
-                        # 2. Upload (ชื่อไฟล์ใช้เวลาไทย)
+                        # 2. Upload
                         ts = get_thai_time().strftime("%Y%m%d_%H%M%S")
                         first_file_id = ""
                         for i, img_bytes in enumerate(st.session_state.photo_gallery):
@@ -506,6 +539,85 @@ else:
         if st.button("🔙 กลับไปหยิบเพิ่ม"):
             st.session_state.app_mode = "PICKING"
             st.rerun()
+            
+    # ==========================
+    # MODE C: DELIVERY (ส่งมอบ Rider) (Restored Logic)
+    # ==========================
+    elif st.session_state.order_val and st.session_state.app_mode == "DELIVERY":
+        st.markdown("---")
+        st.markdown("#### 2. ถ่ายรูปยืนยันการส่งมอบ (Rider)")
+        
+        # 1. Photo Capture (Single Photo)
+        if not st.session_state.photo_gallery:
+            st.info("กรุณาถ่ายรูปยืนยันการส่งมอบ (เช่น รูป Rider หรือรูปสินค้าที่จุดส่งมอบ)")
+            cam_key_deliver = f"cam_deliver_{st.session_state.cam_counter}"
+            deliver_img = back_camera_input("แตะเพื่อถ่ายรูปส่งมอบ", key=cam_key_deliver)
+            
+            if deliver_img:
+                img_pil = Image.open(deliver_img)
+                # Convert RGBA to RGB (เพื่อป้องกัน Error ในการ Upload)
+                if img_pil.mode in ('RGBA', 'P'):
+                    img_pil = img_pil.convert('RGB')
+                
+                buf = io.BytesIO()
+                img_pil.save(buf, format='JPEG')
+                # เก็บรูปไว้ใน photo_gallery (list of 1)
+                st.session_state.photo_gallery.append(buf.getvalue())
+                st.session_state.cam_counter += 1
+                st.rerun()
+
+        # 2. Upload Confirmation
+        if st.session_state.photo_gallery:
+            st.markdown(f"**รูปถ่ายส่งมอบ**")
+            st.image(st.session_state.photo_gallery[0], use_column_width=True)
+            
+            col_btn_up, col_btn_can = st.columns(2)
+            
+            with col_btn_up:
+                if st.button(f"☁️ ยืนยันส่งมอบ (Upload)", type="primary", use_container_width=True):
+                    with st.spinner("กำลังสร้าง Folder และอัปโหลด..."):
+                        srv = authenticate_drive()
+                        if srv:
+                            try:
+                                # 1. สร้าง Folder (ใช้โครงสร้างเดิม Order ID_HH-MM)
+                                target_fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
+                                
+                                # 2. Upload (ชื่อไฟล์มีคำว่า _RIDER_)
+                                ts = get_thai_time().strftime("%Y%m%d_%H%M%S")
+                                img_bytes = st.session_state.photo_gallery[0]
+                                fn = f"{st.session_state.order_val}_RIDER_{ts}.jpg"
+                                first_file_id = upload_photo(srv, img_bytes, fn, target_fid)
+                                
+                                # 3. Log (Reuse save_log_batch with dummy item)
+                                delivery_item = [{
+                                    'barcode': st.session_state.order_val, 
+                                    'name': 'Delivery Confirmation',
+                                    'location': 'Rider Handover',
+                                    'qty': 1
+                                }]
+                                
+                                save_log_batch(
+                                    st.session_state.current_user_name, 
+                                    st.session_state.current_user_id,   
+                                    st.session_state.order_val,
+                                    delivery_item, 
+                                    first_file_id 
+                                )
+                                
+                                st.balloons()
+                                st.success(f"✅ บันทึกการส่งมอบสำเร็จ! Order: {st.session_state.order_val}")
+                                time.sleep(2)
+                                reset_all_data() 
+                                st.rerun()
+
+                            except Exception as e:
+                                st.error(f"🔴 เกิดข้อผิดพลาดในการ Upload/Log: {e}")
+                            
+            with col_btn_can:
+                if st.button("❌ ถ่ายใหม่", use_container_width=True):
+                    st.session_state.photo_gallery = []
+                    st.rerun()
+
 
     st.markdown("---")
     if st.button("🔄 ยกเลิก / เริ่มใหม่ทั้งหมด", type="secondary"):
