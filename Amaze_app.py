@@ -215,7 +215,7 @@ st.markdown("""
 <style>
 /* 1. บังคับขยาย iframe ของ back_camera_input ให้สูงขึ้น */
 iframe[title="streamlit_back_camera_input.back_camera_input"] {
-    min-height: 450px !important;  
+    min-height: 250px !important;  
     transform: scale(1.1); 
     transform-origin: top center;
     margin-bottom: 20px;
@@ -478,3 +478,4 @@ else:
     if st.button("🔄 ยกเลิก / เริ่มใหม่ทั้งหมด", type="secondary"):
         reset_all_data()
         st.rerun()
+
