@@ -82,7 +82,7 @@ def load_sheet_data(sheet_name=0):
         return pd.DataFrame()
 
 def save_log_batch(picker_name, order_id, picked_items, file_id):
-    """ฟังก์ชันบันทึก Log แบบ Batch (หลายรายการพร้อมกัน)"""
+    """ฟังก์ชันบันทึก Log แบบ Batch"""
     try:
         creds = get_credentials()
         gc = gspread.authorize(creds)
@@ -100,10 +100,8 @@ def save_log_batch(picker_name, order_id, picked_items, file_id):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         image_link = f"https://drive.google.com/open?id={file_id}"
         
-        # เตรียมข้อมูลหลายแถว
         rows_to_append = []
         for item in picked_items:
-            # item = {barcode, name, location, qty}
             row = [
                 timestamp,
                 picker_name,
@@ -112,12 +110,11 @@ def save_log_batch(picker_name, order_id, picked_items, file_id):
                 item['name'],
                 item['location'],
                 item['qty'],
-                "", # Reserved
+                "", 
                 image_link
             ]
             rows_to_append.append(row)
         
-        # บันทึกทีเดียว
         worksheet.append_rows(rows_to_append)
         print(f"Batch Log saved: {len(rows_to_append)} rows.")
     except Exception as e:
@@ -162,7 +159,6 @@ def upload_photo(service, file_obj, filename, folder_id):
 
 # --- STATE MANAGEMENT ---
 def add_to_cart():
-    """เพิ่มสินค้าลงตะกร้าชั่วคราว"""
     if st.session_state.prod_val and st.session_state.loc_val:
         item = {
             "barcode": st.session_state.prod_val,
@@ -172,7 +168,6 @@ def add_to_cart():
         }
         st.session_state.cart_items.append(item)
         
-        # Reset ช่องกรอกเพื่อรับชิ้นต่อไป
         st.session_state.prod_val = ""
         st.session_state.loc_val = ""
         st.session_state.prod_display_name = ""
@@ -183,7 +178,6 @@ def add_to_cart():
         st.rerun()
 
 def finish_picking_mode():
-    """เปลี่ยนโหมดไปหน้าถ่ายรูป"""
     if not st.session_state.cart_items:
         st.error("⚠️ ยังไม่มีสินค้าในรายการ")
     else:
@@ -191,7 +185,6 @@ def finish_picking_mode():
         st.rerun()
 
 def reset_all_data():
-    """ล้างทุกอย่างเริ่ม Order ใหม่"""
     st.session_state.order_val = ""
     st.session_state.prod_val = ""
     st.session_state.loc_val = ""
@@ -199,8 +192,8 @@ def reset_all_data():
     st.session_state.photo_gallery = []
     st.session_state.pick_qty = 1
     st.session_state.cam_counter += 1
-    st.session_state.cart_items = [] # ล้างตะกร้า
-    st.session_state.app_mode = "PICKING" # กลับสู่โหมดหยิบของ
+    st.session_state.cart_items = [] 
+    st.session_state.app_mode = "PICKING" 
 
 def logout_user():
     st.session_state.current_user_name = ""
@@ -221,8 +214,8 @@ if 'prod_display_name' not in st.session_state: st.session_state.prod_display_na
 if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
 if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
 if 'pick_qty' not in st.session_state: st.session_state.pick_qty = 1 
-if 'cart_items' not in st.session_state: st.session_state.cart_items = [] # ตะกร้าสินค้า
-if 'app_mode' not in st.session_state: st.session_state.app_mode = "PICKING" # PICKING หรือ PACKING
+if 'cart_items' not in st.session_state: st.session_state.cart_items = [] 
+if 'app_mode' not in st.session_state: st.session_state.app_mode = "PICKING" 
 
 # --- PART 1: LOGIN ---
 if not st.session_state.current_user_name:
@@ -269,7 +262,7 @@ else:
 
     df_items = load_sheet_data(0)
 
-    # 1. ORDER (แสดงตลอด)
+    # 1. ORDER
     if not st.session_state.order_val:
         st.markdown("#### 1. Order ID")
         col1, col2 = st.columns([3, 1])
@@ -294,7 +287,7 @@ else:
         st.markdown("---")
         st.markdown("#### 2. หยิบสินค้า (เพิ่มลงรายการ)")
         
-        # ส่วนสแกนสินค้า
+        # Scan Product
         if not st.session_state.prod_val:
             col1, col2 = st.columns([3, 1])
             manual_prod = col1.text_input("พิมพ์ Barcode", key="input_prod_manual").strip()
@@ -309,7 +302,7 @@ else:
                     st.session_state.prod_val = res_p[0].data.decode("utf-8")
                     st.rerun()
         else:
-            # เจอสินค้าแล้ว -> Verify & Input Qty
+            # Verify
             target_loc_str = None
             prod_found = False
             
@@ -336,7 +329,6 @@ else:
                         st.rerun()
 
             if prod_found and target_loc_str:
-                # ยืนยัน Location
                 if not st.session_state.loc_val:
                     manual_loc = st.text_input("Scan/พิมพ์ Location", key="input_loc").strip().upper()
                     if manual_loc:
@@ -350,7 +342,6 @@ else:
                             st.session_state.loc_val = res_l[0].data.decode("utf-8").upper()
                             st.rerun()
                 else:
-                    # ตรวจสอบ Location
                     valid_loc = False
                     if st.session_state.loc_val in target_loc_str:
                         st.success(f"✅ Location ถูกต้อง: {st.session_state.loc_val}")
@@ -361,7 +352,6 @@ else:
                             st.session_state.loc_val = ""
                             st.rerun()
                     
-                    # ใส่จำนวน และ ปุ่มเพิ่มลงรายการ
                     if valid_loc:
                         st.markdown(f"**จำนวนที่หยิบ (Qty)**")
                         st.session_state.pick_qty = st.number_input("ระบุจำนวน", min_value=1, value=1, step=1, label_visibility="collapsed")
@@ -374,18 +364,14 @@ else:
                             st.session_state.loc_val = ""
                             st.rerun()
 
-        # แสดงรายการที่หยิบแล้ว (Cart Display) - ตรงนี้คือจุดที่วงกลมสีแดงต้องการ
         st.markdown("---")
         st.markdown(f"🛒 **รายการที่หยิบแล้ว ({len(st.session_state.cart_items)} รายการ)**")
         
         if st.session_state.cart_items:
-            # สร้าง Dataframe โชว์สวยๆ
             cart_df = pd.DataFrame(st.session_state.cart_items)
-            # เปลี่ยนชื่อหัวตารางให้สื่อความหมาย
             cart_df.columns = ["Barcode", "สินค้า", "Location", "Qty"]
             st.dataframe(cart_df, use_container_width=True, hide_index=True)
             
-            # ปุ่มไปขั้นตอนถัดไป
             if st.button("✅ หยิบครบแล้ว / ไปถ่ายรูป", type="primary", use_container_width=True):
                 finish_picking_mode()
 
@@ -396,11 +382,9 @@ else:
         st.markdown("---")
         st.markdown("#### 3. ถ่ายรูปยืนยัน (Pack)")
         
-        # แสดงสรุปรายการอีกครั้ง
         st.info(f"📦 Order: {st.session_state.order_val} | ทั้งหมด {len(st.session_state.cart_items)} รายการ")
-        st.table(pd.DataFrame(st.session_state.cart_items)[['name', 'qty']]) # โชว์แค่ชื่อกับจำนวนแบบย่อ
+        st.table(pd.DataFrame(st.session_state.cart_items)[['name', 'qty']]) 
         
-        # ส่วนถ่ายรูป (เหมือนเดิม)
         st.markdown(f"**ถ่ายรูปสินค้าในกล่อง ({len(st.session_state.photo_gallery)}/5)**")
         
         if st.session_state.photo_gallery:
@@ -415,24 +399,25 @@ else:
         if len(st.session_state.photo_gallery) < 5:
             pack_img = back_camera_input("แตะเพื่อถ่ายรูป", key=f"cam_pack_{st.session_state.cam_counter}")
             if pack_img:
+                # --- FIX: Convert RGBA to RGB for JPEG ---
                 img_pil = Image.open(pack_img)
+                if img_pil.mode in ('RGBA', 'P'):
+                    img_pil = img_pil.convert('RGB')
+                
                 buf = io.BytesIO()
                 img_pil.save(buf, format='JPEG')
                 st.session_state.photo_gallery.append(buf.getvalue())
                 st.session_state.cam_counter += 1
                 st.rerun()
 
-        # ปุ่ม Upload ทีเดียวจบ
         if len(st.session_state.photo_gallery) > 0:
             st.markdown("---")
             if st.button(f"☁️ ยืนยันปิดงาน Order นี้ (Upload)", type="primary", use_container_width=True):
                 with st.spinner("กำลังสร้าง Folder และอัปโหลด..."):
                     srv = authenticate_drive()
                     if srv:
-                        # 1. สร้าง Folder เดียวสำหรับ Order นี้
                         target_fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
                         
-                        # 2. อัปโหลดรูปทั้งหมด
                         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                         first_file_id = ""
                         for i, img_bytes in enumerate(st.session_state.photo_gallery):
@@ -440,25 +425,23 @@ else:
                             upl_id = upload_photo(srv, img_bytes, fn, target_fid)
                             if i == 0: first_file_id = upl_id
                         
-                        # 3. บันทึก Log ทีเดียว (Loop ตามจำนวนสินค้าในตะกร้า)
                         save_log_batch(
                             st.session_state.current_user_name,
                             st.session_state.order_val,
-                            st.session_state.cart_items, # ส่งรายการทั้งหมดไป
-                            first_file_id # ลิงก์รูปเดียวกันทุกรายการ
+                            st.session_state.cart_items, 
+                            first_file_id 
                         )
                         
                         st.balloons()
                         st.success("✅ ปิดงานสำเร็จ! กำลังรีเซ็ต...")
                         time.sleep(2)
-                        reset_all_data() # เคลียร์ทุกอย่างรวมถึง Order ID
+                        reset_all_data() 
                         st.rerun()
         
         if st.button("🔙 กลับไปหยิบเพิ่ม"):
             st.session_state.app_mode = "PICKING"
             st.rerun()
 
-    # ปุ่ม Reset ใหญ่
     st.markdown("---")
     if st.button("🔄 ยกเลิก / เริ่มใหม่ทั้งหมด", type="secondary"):
         reset_all_data()
