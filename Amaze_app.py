@@ -210,19 +210,27 @@ def logout_user():
 # --- UI SETUP ---
 st.set_page_config(page_title="Smart Picking System", page_icon="📦")
 
-# === CSS INJECTION: ปรับขนาดกล้อง ===
+# === CSS INJECTION: ปรับขนาดกล้อง & ซ่อน Footer ===
 st.markdown("""
 <style>
-/* บังคับขยาย iframe ของ back_camera_input ให้สูงขึ้น */
+/* 1. บังคับขยาย iframe ของ back_camera_input ให้สูงขึ้น */
 iframe[title="streamlit_back_camera_input.back_camera_input"] {
-    min-height: 250px !important;  /* เพิ่มความสูงขั้นต่ำ (จากเดิมมักจะ 300px) */
-    transform: scale(1.1); /* ขยาย Scale เล็กน้อยเพื่อให้เต็มตา */
+    min-height: 450px !important;  
+    transform: scale(1.1); 
     transform-origin: top center;
     margin-bottom: 20px;
 }
+
+/* 2. ซ่อนเมนู Hamburger (ขวาบน) และ Footer (ขวาล่าง) */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* ซ่อนแถบสีรุ้งด้านบนสุด */
+[data-testid="stDecoration"] {display: none;}
 </style>
 """, unsafe_allow_html=True)
-# ==================================
+# ================================================
 
 # Init Session State
 if 'current_user_name' not in st.session_state: st.session_state.current_user_name = ""
@@ -470,5 +478,3 @@ else:
     if st.button("🔄 ยกเลิก / เริ่มใหม่ทั้งหมด", type="secondary"):
         reset_all_data()
         st.rerun()
-
-
