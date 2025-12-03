@@ -9,6 +9,7 @@ from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
 import time
+import pytz # เพิ่ม Library จัดการ Timezone
 
 # --- IMPORT LIBRARY กล้อง ---
 try:
@@ -22,6 +23,12 @@ MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 LOG_SHEET_NAME = 'Logs'
 USER_SHEET_NAME = 'User'
+THAI_TZ = pytz.timezone('Asia/Bangkok') # ตั้งค่า Timezone ไทย
+
+# --- HELPER: GET THAI TIME ---
+def get_thai_time():
+    """ฟังก์ชันดึงเวลาปัจจุบันแบบไทย"""
+    return datetime.now(THAI_TZ)
 
 # --- AUTHENTICATION ---
 def get_credentials():
@@ -81,7 +88,8 @@ def load_sheet_data(sheet_name=0):
         print(f"Sheet Error ({sheet_name}): {e}")
         return pd.DataFrame()
 
-def save_log_batch(picker_name, order_id, picked_items, file_id):
+# --- MODIFIED: Save Log with User ID in Col H ---
+def save_log_batch(picker_name, picker_id, order_id, picked_items, file_id):
     """ฟังก์ชันบันทึก Log แบบ Batch"""
     try:
         creds = get_credentials()
@@ -94,24 +102,25 @@ def save_log_batch(picker_name, order_id, picked_items, file_id):
             worksheet = sh.add_worksheet(title=LOG_SHEET_NAME, rows="1000", cols="20")
             worksheet.append_row([
                 "Timestamp", "Picker Name", "Order ID", "Barcode", "Product Name", "Location", 
-                "Pick Qty", "Reserved", "Image Link (Col I)"
+                "Pick Qty", "User ID", "Image Link (Col I)"
             ])
             
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # ใช้เวลาไทย
+        timestamp = get_thai_time().strftime("%Y-%m-%d %H:%M:%S")
         image_link = f"https://drive.google.com/open?id={file_id}"
         
         rows_to_append = []
         for item in picked_items:
             row = [
                 timestamp,
-                picker_name,
-                order_id,
+                picker_name,   # Col B: ชื่อพนักงาน
+                order_id,      # Col C
                 item['barcode'],
                 item['name'],
                 item['location'],
                 item['qty'],
-                "", 
-                image_link
+                picker_id,     # Col H: รหัสพนักงาน (ตามที่ขอ)
+                image_link     # Col I
             ]
             rows_to_append.append(row)
         
@@ -121,11 +130,12 @@ def save_log_batch(picker_name, order_id, picked_items, file_id):
         st.warning(f"⚠️ บันทึก Log ไม่สำเร็จ: {e}")
 
 # ==============================================================================
-# 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED)
+# 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED & TZ FIX)
 # ==============================================================================
 def get_target_folder_structure(service, order_id, main_parent_id):
-    # 1. Folder วันที่
-    date_folder_name = datetime.now().strftime("%d-%m-%Y")
+    # 1. Folder วันที่ (ใช้เวลาไทย)
+    date_folder_name = get_thai_time().strftime("%d-%m-%Y")
+    
     q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res_date = service.files().list(q=q_date, fields="files(id)").execute()
     files_date = res_date.get('files', [])
@@ -137,8 +147,8 @@ def get_target_folder_structure(service, order_id, main_parent_id):
         date_folder = service.files().create(body=meta_date, fields='id').execute()
         date_folder_id = date_folder.get('id')
         
-    # 2. Folder Order_HH-MM
-    time_suffix = datetime.now().strftime("%H-%M")
+    # 2. Folder Order_HH-MM (ใช้เวลาไทย)
+    time_suffix = get_thai_time().strftime("%H-%M")
     order_folder_name = f"{order_id}_{time_suffix}"
     
     meta_order = {'name': order_folder_name, 'parents': [date_folder_id], 'mimeType': 'application/vnd.google-apps.folder'}
@@ -399,8 +409,8 @@ else:
         if len(st.session_state.photo_gallery) < 5:
             pack_img = back_camera_input("แตะเพื่อถ่ายรูป", key=f"cam_pack_{st.session_state.cam_counter}")
             if pack_img:
-                # --- FIX: Convert RGBA to RGB for JPEG ---
                 img_pil = Image.open(pack_img)
+                # Convert RGBA to RGB (Fix OSError)
                 if img_pil.mode in ('RGBA', 'P'):
                     img_pil = img_pil.convert('RGB')
                 
@@ -416,17 +426,21 @@ else:
                 with st.spinner("กำลังสร้าง Folder และอัปโหลด..."):
                     srv = authenticate_drive()
                     if srv:
+                        # 1. สร้าง Folder (ใช้เวลาไทย)
                         target_fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
                         
-                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        # 2. Upload (ชื่อไฟล์ใช้เวลาไทย)
+                        ts = get_thai_time().strftime("%Y%m%d_%H%M%S")
                         first_file_id = ""
                         for i, img_bytes in enumerate(st.session_state.photo_gallery):
                             fn = f"{st.session_state.order_val}_PACK_{ts}_Img{i+1}.jpg"
                             upl_id = upload_photo(srv, img_bytes, fn, target_fid)
                             if i == 0: first_file_id = upl_id
                         
+                        # 3. Log (User ลง Col H)
                         save_log_batch(
-                            st.session_state.current_user_name,
+                            st.session_state.current_user_name, # Col B
+                            st.session_state.current_user_id,   # Col H (ที่ขอเพิ่ม)
                             st.session_state.order_val,
                             st.session_state.cart_items, 
                             first_file_id 
