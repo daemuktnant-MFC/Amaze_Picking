@@ -10,20 +10,13 @@ from pyzbar.pyzbar import decode
 import io 
 import time
 
-# --- IMPORT LIBRARY กล้อง ---
-try:
-    from streamlit_back_camera_input import back_camera_input
-except ImportError:
-    st.error("⚠️ ต้องเพิ่ม 'streamlit-back-camera-input' ใน requirements.txt")
-    st.stop()
-
 # --- CSS HACK: ขยายความสูงกล้อง 50% ---
 st.markdown(
     """
     <style>
     /* ขยายความสูงของ iframe ที่รันกล้อง (ปรับค่า min-height ให้สูงขึ้น) */
     iframe[title="streamlit_back_camera_input.back_camera_input"] {
-        min-height: 250px !important; 
+        min-height: 300px !important; 
         height: 150% !important;
     }
     /* ปรับแต่งตารางให้ดูง่ายขึ้น */
@@ -141,7 +134,7 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
             prod_name, 
             location, 
             pick_qty, 
-            user_col, # Column H
+            user_col, # Column H: User ID
             image_link
         ]
         worksheet.append_row(row_data)
@@ -235,7 +228,7 @@ def reset_all_data():
     st.session_state.current_order_items = []
     st.session_state.photo_gallery = [] 
     st.session_state.rider_photo = None
-    st.session_state.picking_phase = 'scan' # Reset กลับไปเฟสแรก
+    st.session_state.picking_phase = 'scan'
     reset_for_next_item()
 
 def logout_user():
@@ -247,7 +240,6 @@ def logout_user():
 # --- UI SETUP ---
 st.set_page_config(page_title="Smart Picking System", page_icon="📦")
 
-# Init Session State
 keys = ['current_user_name', 'current_user_id', 'order_val', 'prod_val', 'loc_val', 
         'prod_display_name', 'photo_gallery', 'cam_counter', 'pick_qty', 'rider_photo', 
         'current_order_items', 'picking_phase']
@@ -257,7 +249,7 @@ for k in keys:
         elif k == 'cam_counter': st.session_state[k] = 0
         elif k == 'photo_gallery': st.session_state[k] = []
         elif k == 'current_order_items': st.session_state[k] = []
-        elif k == 'picking_phase': st.session_state[k] = 'scan' # 'scan' or 'pack'
+        elif k == 'picking_phase': st.session_state[k] = 'scan'
         else: st.session_state[k] = ""
 
 # --- LOGIN ---
@@ -411,7 +403,6 @@ else:
                     st.markdown(f"### 🛒 ตะกร้าสินค้า ({len(st.session_state.current_order_items)} รายการ)")
                     st.dataframe(pd.DataFrame(st.session_state.current_order_items), use_container_width=True)
                     
-                    # ปุ่มเปลี่ยนไป Phase 2
                     if st.button("✅ ยืนยันรายการครบแล้ว (ไปถ่ายรูป)", type="primary", use_container_width=True):
                         st.session_state.picking_phase = 'pack'
                         st.rerun()
@@ -426,7 +417,7 @@ else:
             st.info("รายการสินค้าที่จะแพ็ค:")
             st.dataframe(pd.DataFrame(st.session_state.current_order_items), use_container_width=True)
             
-            st.markdown("#### 4. ถ่ายรูปปิดกล่อง (รวมทุกชิ้น)")
+            st.markdown("#### 3. ถ่ายรูปปิดกล่อง (รวมทุกชิ้น)")
             
             if st.session_state.photo_gallery:
                 cols = st.columns(5)
@@ -436,7 +427,6 @@ else:
                         if st.button("🗑️", key=f"del_{idx}"): st.session_state.photo_gallery.pop(idx); st.rerun()
             
             if len(st.session_state.photo_gallery) < 5:
-                # กล้องถ่ายรูปแพ็ค (CSS Apply here too)
                 pack_img = back_camera_input("ถ่ายรูปสินค้ากองรวม (กล้องหลัง)", key=f"pack_cam_fin_{st.session_state.cam_counter}")
                 if pack_img:
                     img_pil = Image.open(pack_img)
@@ -449,6 +439,7 @@ else:
             with col_b1:
                 if st.button("⬅️ กลับไปแก้ไขรายการ"):
                     st.session_state.picking_phase = 'scan'
+                    st.session_state.photo_gallery = [] # ล้างรูปที่ถ่ายไว้หากจะกลับไปแก้ไข
                     st.rerun()
             with col_b2:
                 if len(st.session_state.photo_gallery) > 0:
@@ -467,6 +458,7 @@ else:
                                 
                                 # Loop Save Logs
                                 for item in st.session_state.current_order_items:
+                                    # --- CHANGE HERE: บันทึก User ID ลง Column H ---
                                     save_log_to_sheet(
                                         st.session_state.current_user_name,
                                         st.session_state.order_val,
@@ -474,7 +466,7 @@ else:
                                         item['Product Name'],
                                         item['Location'],
                                         item['Qty'],
-                                        st.session_state.current_user_name,
+                                        st.session_state.current_user_id, # บันทึก User ID
                                         first_id
                                     )
                                 
