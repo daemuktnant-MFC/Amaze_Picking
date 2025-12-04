@@ -259,7 +259,7 @@ if not st.session_state.current_user_name:
         
         col1, col2 = st.columns([3, 1])
         
-        # FIX: ใช้ key ที่กำหนดค่า value เป็น st.session_state.last_user_input
+        # FIX: ใช้ value=st.session_state.last_user_input ในการควบคุมและล้างค่า
         manual_user_key = "input_user_manual_step1"
         manual_user = col1.text_input("พิมพ์รหัสพนักงาน", key=manual_user_key, value=st.session_state.last_user_input).strip()
         
@@ -275,6 +275,7 @@ if not st.session_state.current_user_name:
         # ตรวจสอบ ID ที่เพิ่งเข้ามา
         if user_input_val:
             # *CRITICAL FIX*: ล้างค่า Manual Input ใน Session State เพื่อเคลียร์ช่องพิมพ์
+            # การทำเช่นนี้จะทำให้ช่องพิมพ์ถูกรีเซ็ตในรอบถัดไป
             st.session_state.last_user_input = "" 
             
             if not df_users.empty:
@@ -321,7 +322,7 @@ if not st.session_state.current_user_name:
 
 # --- PART 2: MAIN SYSTEM ---
 else:
-    # --- START SIDEBAR LOGIC (New Location) ---
+    # --- START SIDEBAR LOGIC ---
     with st.sidebar:
         st.write(f"👤 **{st.session_state.current_user_name}**")
         st.divider()
@@ -334,29 +335,35 @@ else:
         
         # ปรับค่าเริ่มต้นของ Radio ให้ตรงกับ app_mode
         current_sidebar_mode = "📦 แผนกแพ็คสินค้า"
+        if st.session_state.app_mode == "DELIVERY" or st.session_state.app_mode == "PACKING":
+             current_sidebar_mode = "📦 แผนกแพ็คสินค้า"
+        # หากมีการเลือก Rider เป็นค่าล่าสุด แต่ไม่ได้อยู่ในโหมด PACKING/PICKING
         if st.session_state.app_mode == "DELIVERY":
              current_sidebar_mode = "🛵 ส่งงาน Rider"
+             
+        # ตรวจสอบว่าโหมดปัจจุบันเป็นโหมดที่ต้องถูกล็อกหรือไม่
+        is_in_packing_flow = st.session_state.app_mode == "PACKING"
         
         selected_mode_display = st.radio(
             "เลือกโหมดทำงาน:",
             options=list(mode_options.keys()),
             index=list(mode_options.keys()).index(current_sidebar_mode),
             key="sidebar_mode_selector_radio",
-            #index=0
+            disabled=is_in_packing_flow # ล็อกการเลือกโหมดอื่นเมื่ออยู่ใน PACKING
         )
         
         # Logic เปลี่ยน app_mode เมื่อมีการเลือกใน Sidebar
         new_app_mode = mode_options[selected_mode_display]
         
-        if new_app_mode != st.session_state.app_mode:
-            # FIX: ต้อง handle โหมด PACKING ด้วย เพราะมันอยู่ใน PICKING Flow
-            if new_app_mode == "PICKING":
-                 st.session_state.app_mode = "PICKING"
-            elif new_app_mode == "DELIVERY":
-                 st.session_state.app_mode = "DELIVERY"
-            
+        # FIX: แก้ไข Logic การสลับโหมดให้ถูกต้อง
+        if new_app_mode != st.session_state.app_mode and not is_in_packing_flow:
+            st.session_state.app_mode = new_app_mode
             st.session_state.photo_gallery = [] # Clear gallery when switching mode
             st.rerun()
+        
+        # แสดงคำเตือนถ้าพยายามสลับโหมดขณะอยู่ใน PACKING
+        if is_in_packing_flow:
+            st.warning("⚠️ กรุณายืนยัน Upload ในหน้าหลักก่อนเปลี่ยนโหมด")
             
         st.divider()
         if st.button("Logout", type="secondary"): logout_user()
@@ -390,10 +397,8 @@ else:
     else:
         st.success(f"📦 Order: **{st.session_state.order_val}**")
 
-        # Removed Mode Selector from main body as it's now in sidebar
-
     # ==========================
-    # MODE A/B: PICKING/PACKING
+    # MODE A: PICKING (หยิบของ)
     # ==========================
     if st.session_state.order_val and st.session_state.app_mode == "PICKING":
         st.markdown("---")
