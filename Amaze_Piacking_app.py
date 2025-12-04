@@ -597,4 +597,6 @@ else:
                             st.session_state.order_val = ""
                             st.session_state.target_rider_folder_id = None
                             st.session_state.cam_counter += 1
+                            # เรียกใช้ reset_all_data() เพื่อล้างค่าทั้งหมดรวมถึง Order ID ในกล่องข้อความ
+                            reset_all_data()
                             st.rerun()
