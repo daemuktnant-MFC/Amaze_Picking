@@ -265,17 +265,18 @@ def logout_user():
 st.set_page_config(page_title="Smart Picking System", page_icon="📦")
 
 # Init Session State
-keys = ['current_user_name', 'current_user_id', 'order_val', 'prod_val', 'loc_val', 
-        'prod_display_name', 'photo_gallery', 'cam_counter', 'pick_qty', 'rider_photo', 
-        'current_order_items', 'picking_phase']
-for k in keys:
-    if k not in st.session_state: 
-        if k == 'pick_qty': st.session_state[k] = 1
-        elif k == 'cam_counter': st.session_state[k] = 0
-        elif k == 'photo_gallery': st.session_state[k] = []
-        elif k == 'current_order_items': st.session_state[k] = []
-        elif k == 'picking_phase': st.session_state[k] = 'scan' # 'scan' or 'pack'
-        else: st.session_state[k] = ""
+if 'current_user_name' not in st.session_state: st.session_state.current_user_name = ""
+if 'current_user_id' not in st.session_state: st.session_state.current_user_id = ""
+if 'order_val' not in st.session_state: st.session_state.order_val = ""
+if 'prod_val' not in st.session_state: st.session_state.prod_val = ""
+if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
+if 'prod_display_name' not in st.session_state: st.session_state.prod_display_name = ""
+if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
+if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
+if 'pick_qty' not in st.session_state: st.session_state.pick_qty = 1 
+if 'cart_items' not in st.session_state: st.session_state.cart_items = [] 
+if 'app_mode' not in st.session_state: st.session_state.app_mode = "PICKING" 
+if 'temp_login_user' not in st.session_state: st.session_state.temp_login_user = None
 
 # --- LOGIN ---
 if not st.session_state.current_user_name:
