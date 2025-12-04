@@ -246,6 +246,7 @@ if 'pick_qty' not in st.session_state: st.session_state.pick_qty = 1
 if 'cart_items' not in st.session_state: st.session_state.cart_items = [] 
 if 'app_mode' not in st.session_state: st.session_state.app_mode = "PICKING" 
 if 'temp_login_user' not in st.session_state: st.session_state.temp_login_user = None
+if 'last_user_input' not in st.session_state: st.session_state.last_user_input = ""
 
 # --- PART 1: LOGIN ---
 if not st.session_state.current_user_name:
@@ -257,11 +258,9 @@ if not st.session_state.current_user_name:
         st.info("กรุณาสแกนรหัสพนักงาน")
         
         col1, col2 = st.columns([3, 1])
-        # FIX: ใช้ key ที่ไม่ซ้ำกันเพื่อให้เกิดการ re-render และล้างค่า
-        # เราจะใช้ key ที่กำหนดค่า value เป็น '' ในการล้างค่า
+        
+        # FIX: ใช้ key ที่กำหนดค่า value เป็น st.session_state.last_user_input
         manual_user_key = "input_user_manual_step1"
-        if 'last_user_input' not in st.session_state: st.session_state.last_user_input = ""
-
         manual_user = col1.text_input("พิมพ์รหัสพนักงาน", key=manual_user_key, value=st.session_state.last_user_input).strip()
         
         cam_key_user = f"cam_user_{st.session_state.cam_counter}"
@@ -275,7 +274,7 @@ if not st.session_state.current_user_name:
         
         # ตรวจสอบ ID ที่เพิ่งเข้ามา
         if user_input_val:
-            # *CRITICAL FIX*: ล้างค่า Manual Input ใน Session State
+            # *CRITICAL FIX*: ล้างค่า Manual Input ใน Session State เพื่อเคลียร์ช่องพิมพ์
             st.session_state.last_user_input = "" 
             
             if not df_users.empty:
@@ -322,12 +321,54 @@ if not st.session_state.current_user_name:
 
 # --- PART 2: MAIN SYSTEM ---
 else:
+    # --- START SIDEBAR LOGIC (New Location) ---
+    with st.sidebar:
+        st.write(f"👤 **{st.session_state.current_user_name}**")
+        st.divider()
+        
+        # กำหนด Option และค่าปัจจุบันสำหรับการแสดงผล
+        mode_options = {
+            "📦 แผนกแพ็คสินค้า": "PICKING",
+            "🛵 ส่งงาน Rider": "DELIVERY"
+        }
+        
+        # ปรับค่าเริ่มต้นของ Radio ให้ตรงกับ app_mode
+        current_sidebar_mode = "📦 แผนกแพ็คสินค้า"
+        if st.session_state.app_mode == "DELIVERY":
+             current_sidebar_mode = "🛵 ส่งงาน Rider"
+        
+        selected_mode_display = st.radio(
+            "เลือกโหมดทำงาน:",
+            options=list(mode_options.keys()),
+            index=list(mode_options.keys()).index(current_sidebar_mode),
+            key="sidebar_mode_selector_radio",
+            index=0
+        )
+        
+        # Logic เปลี่ยน app_mode เมื่อมีการเลือกใน Sidebar
+        new_app_mode = mode_options[selected_mode_display]
+        
+        if new_app_mode != st.session_state.app_mode:
+            # FIX: ต้อง handle โหมด PACKING ด้วย เพราะมันอยู่ใน PICKING Flow
+            if new_app_mode == "PICKING":
+                 st.session_state.app_mode = "PICKING"
+            elif new_app_mode == "DELIVERY":
+                 st.session_state.app_mode = "DELIVERY"
+            
+            st.session_state.photo_gallery = [] # Clear gallery when switching mode
+            st.rerun()
+            
+        st.divider()
+        if st.button("Logout", type="secondary"): logout_user()
+
+    # --- END SIDEBAR LOGIC ---
+    
+    # --- MAIN CONTENT ---
     c1, c2 = st.columns([3, 1])
     with c1:
         st.title("📦 ระบบเบิกสินค้า")
         st.caption(f"👤: **{st.session_state.current_user_name}** | Mode: {st.session_state.app_mode}")
-    with c2:
-        if st.button("Logout", type="secondary"): logout_user()
+    # (Removed c2 logout button as it's now in sidebar)
 
     df_items = load_sheet_data(0)
 
@@ -348,49 +389,11 @@ else:
                 st.rerun()
     else:
         st.success(f"📦 Order: **{st.session_state.order_val}**")
-        st.markdown("---")
-        
-        # --- MODE SELECTION ---
-        mode_options = {
-            "Picking/Packing": "PICKING",
-            "Delivery Confirmation (Rider)": "DELIVERY"
-        }
-        
-        # ตั้งค่า Mode เริ่มต้นให้สัมพันธ์กับค่าใน session state
-        current_display_mode = "Picking/Packing"
-        if st.session_state.app_mode == "DELIVERY":
-             current_display_mode = "Delivery Confirmation (Rider)"
-        # Note: If mode is PACKING, we still show Picking/Packing for display purposes
 
-        selected_mode_display = st.radio(
-            "เลือกขั้นตอนการทำงานสำหรับ Order นี้:",
-            options=list(mode_options.keys()),
-            index=list(mode_options.keys()).index(current_display_mode),
-            key="app_mode_selector_radio",
-            horizontal=True
-        )
-        
-        # เปลี่ยน app_mode เมื่อมีการสลับ
-        new_app_mode = mode_options[selected_mode_display]
-        # Logic to ensure PACKING mode continues if cart is not empty
-        if new_app_mode == "DELIVERY" and st.session_state.app_mode != "DELIVERY":
-            st.session_state.app_mode = "DELIVERY"
-            st.session_state.photo_gallery = [] # Clear gallery when switching mode
-            st.rerun()
-        elif new_app_mode == "PICKING" and st.session_state.app_mode == "DELIVERY":
-            st.session_state.app_mode = "PICKING"
-            st.rerun()
-        # ถ้าอยู่ในโหมด PACKING อยู่แล้ว ให้คงสถานะ PACKING ไว้
-        elif st.session_state.app_mode == "PACKING":
-            pass 
-        elif new_app_mode == "PICKING" and st.session_state.app_mode != "PICKING":
-            st.session_state.app_mode = "PICKING"
-            st.rerun()
-        # --- END MODE SELECTION ---
-
+        # Removed Mode Selector from main body as it's now in sidebar
 
     # ==========================
-    # MODE A: PICKING (หยิบของ)
+    # MODE A/B: PICKING/PACKING
     # ==========================
     if st.session_state.order_val and st.session_state.app_mode == "PICKING":
         st.markdown("---")
