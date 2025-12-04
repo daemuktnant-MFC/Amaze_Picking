@@ -17,23 +17,23 @@ except ImportError:
     st.error("⚠️ ต้องเพิ่ม 'streamlit-back-camera-input' ใน requirements.txt")
     st.stop()
 
-# --- CSS HACK: ขยายความสูงกล้อง 50% ---
-st.markdown(
-    """
-    <style>
-    /* ขยายความสูงของ iframe ที่รันกล้อง (ปรับค่า min-height ให้สูงขึ้น) */
-    iframe[title="streamlit_back_camera_input.back_camera_input"] {
-        min-height: 300px !important; 
-        height: 150% !important;
-    }
-    /* ปรับแต่งตารางให้ดูง่ายขึ้น */
-    div[data-testid="stDataFrame"] {
-        width: 100%;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+# --- CSS HACK: ปรับขนาดกล้อง ---
+st.markdown("""
+<style>
+/* บังคับขยาย iframe ของ back_camera_input ให้สูงขึ้น */
+iframe[title="streamlit_back_camera_input.back_camera_input"] {
+    min-height: 250px !important; 
+    transform: scale(1.1); 
+    transform-origin: top center;
+    margin-bottom: 20px;
+}
+/* ปรับแต่งตารางให้ดูง่ายขึ้น */
+div[data-testid="stDataFrame"] {
+    width: 100%;
+}
+</style>
+""", unsafe_allow_html=True)
+# ==================================
 
 # --- CONFIGURATION ---
 MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
@@ -108,8 +108,7 @@ def load_sheet_data(sheet_name=0):
     except Exception as e:
         return pd.DataFrame()
 
-# NOTE: save_log_to_sheet เดิมถูกออกแบบมาเพื่อรับรายการเดียว ซึ่งถูกเรียกใช้ในการ Loop ในโหมด PACK
-# แต่สามารถ reuse ในโหมด RIDER ได้โดยการเรียกใช้เพียงครั้งเดียว
+# NOTE: save_log_to_sheet เดิมถูกออกแบบมาเพื่อรับรายการเดียว
 def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_qty, user_col, file_id):
     try:
         creds = get_credentials()
@@ -139,11 +138,6 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
         worksheet.append_row(row_data)
     except Exception as e:
         st.warning(f"⚠️ บันทึก Log ไม่สำเร็จ: {e}")
-
-# NOTE: ฟังก์ชันนี้จะถูกยกเลิกการเรียกใช้ในโหมด RIDER เพื่อให้ไปบันทึกรวมใน Logs แทน
-def save_rider_log(picker_name, order_id, file_id, folder_name):
-    # DUMMY function, will be replaced by direct call to save_log_to_sheet in RIDER mode
-    pass 
 
 # --- TIME HELPER (UTC+7) ---
 def get_thai_time():
@@ -252,40 +246,30 @@ def logout_user():
 # --- UI SETUP ---
 st.set_page_config(page_title="Smart Picking System", page_icon="📦")
 
-# === CSS INJECTION: ปรับขนาดกล้อง ===
-st.markdown("""
-<style>
-/* บังคับขยาย iframe ของ back_camera_input ให้สูงขึ้น */
-iframe[title="streamlit_back_camera_input.back_camera_input"] {
-    min-height: 250px !important;  /* เพิ่มความสูงขั้นต่ำ (จากเดิมมักจะ 300px) */
-    transform: scale(1.1); /* ขยาย Scale เล็กน้อยเพื่อให้เต็มตา */
-    transform-origin: top center;
-    margin-bottom: 20px;
-}
-</style>
-""", unsafe_allow_html=True)
-# ==================================
-
 # 🚩 Initialize ALL necessary session state variables robustly
 def init_session_state():
-    if st.session_state.get('current_user_name') is None: st.session_state.current_user_name = ""
-    if st.session_state.get('current_user_id') is None: st.session_state.current_user_id = ""
-    if st.session_state.get('order_val') is None: st.session_state.order_val = ""
-    if st.session_state.get('prod_val') is None: st.session_state.prod_val = ""
-    if st.session_state.get('loc_val') is None: st.session_state.loc_val = ""
-    if st.session_state.get('prod_display_name') is None: st.session_state.prod_display_name = ""
-    if st.session_state.get('photo_gallery') is None: st.session_state.photo_gallery = []
-    if st.session_state.get('cam_counter') is None: st.session_state.cam_counter = 0
-    if st.session_state.get('pick_qty') is None: st.session_state.pick_qty = 1
-    if st.session_state.get('rider_photo') is None: st.session_state.rider_photo = None
-    if st.session_state.get('current_order_items') is None: st.session_state.current_order_items = []
-    if st.session_state.get('picking_phase') is None: st.session_state.picking_phase = 'scan' # 'scan' or 'pack'
-    if st.session_state.get('temp_login_user') is None: st.session_state.temp_login_user = None # New variable for multi-step login
-    if st.session_state.get('last_user_input') is None: st.session_state.last_user_input = ""
+    # *FIX*: กำหนดค่าเริ่มต้นให้กับตัวแปรหลักทั้งหมดอย่างชัดเจน
+    if 'current_user_name' not in st.session_state: st.session_state.current_user_name = ""
+    if 'current_user_id' not in st.session_state: st.session_state.current_user_id = ""
+    if 'app_mode' not in st.session_state: st.session_state.app_mode = "PICKING"
+    
+    # ตัวแปรอื่นๆ
+    if 'order_val' not in st.session_state: st.session_state.order_val = ""
+    if 'prod_val' not in st.session_state: st.session_state.prod_val = ""
+    if 'loc_val' not in st.session_state: st.session_state.loc_val = ""
+    if 'prod_display_name' not in st.session_state: st.session_state.prod_display_name = ""
+    if 'photo_gallery' not in st.session_state: st.session_state.photo_gallery = []
+    if 'cam_counter' not in st.session_state: st.session_state.cam_counter = 0
+    if 'pick_qty' not in st.session_state: st.session_state.pick_qty = 1
+    if 'rider_photo' not in st.session_state: st.session_state.rider_photo = None
+    if 'current_order_items' not in st.session_state: st.session_state.current_order_items = []
+    if 'picking_phase' not in st.session_state: st.session_state.picking_phase = 'scan' 
+    if 'temp_login_user' not in st.session_state: st.session_state.temp_login_user = None
+    if 'last_user_input' not in st.session_state: st.session_state.last_user_input = ""
     
 init_session_state()
 
-# --- LOGIN (Simplified to fix flow/state issues) ---
+# --- PART 1: LOGIN ---
 if not st.session_state.current_user_name:
     st.title("🔐 Login พนักงาน")
     df_users = load_sheet_data(USER_SHEET_NAME)
@@ -388,12 +372,6 @@ else:
         new_app_mode = mode_options[selected_mode_display]
         
         # FIX: แก้ไข Logic การสลับโหมดให้ถูกต้อง
-        if new_app_mode == "DELIVERY" and st.session_state.picking_phase != 'scan':
-            # หากพยายามเปลี่ยนไป Rider แต่ยังอยู่ใน PACK/SCAN ของ PICKING flow
-            st.session_state.picking_phase = 'scan'
-            st.session_state.current_order_items = []
-            st.session_state.order_val = ""
-            
         if new_app_mode != st.session_state.app_mode and not is_in_packing_flow:
             st.session_state.app_mode = new_app_mode
             st.session_state.photo_gallery = [] # Clear gallery when switching mode
@@ -412,10 +390,10 @@ else:
     st.title("📦 ระบบเบิกสินค้า")
     st.caption(f"👤: **{st.session_state.current_user_name}** | Mode: {current_sidebar_mode}")
     
-    # *NEW ADVICE FOR MOBILE USERS*
-    if not st.session_state.order_val:
-        st.info("💡 **ผู้ใช้มือถือ:** แตะที่ปุ่ม `>>` หรือ `☰` ที่มุมบนซ้ายเพื่อเลือกโหมดทำงาน")
-    
+    # *ADVICE FOR MOBILE USERS*
+    if not st.session_state.order_val and st.session_state.app_mode == "PICKING":
+        st.info("💡 **ผู้ใช้มือถือ:** แตะที่ปุ่ม `>>` หรือ `☰` ที่มุมบนซ้ายเพื่อเลือกโหมดทำงานอื่น (Delivery) หรือ Logout")
+
     df_items = load_sheet_data(0)
 
     # =====================================================
@@ -456,10 +434,10 @@ else:
             # Input
             if not st.session_state.prod_val:
                 col1, col2 = st.columns([3, 1])
-                manual_prod = col1.text_input("พิมพ์ Barcode", key="pack_prod_man").strip()
+                manual_prod = col1.text_input("พิมพ์ Barcode", key="input_prod_manual").strip()
                 if manual_prod: st.session_state.prod_val = manual_prod; st.rerun()
                 
-                scan_prod = back_camera_input("แตะเพื่อสแกนสินค้า", key=f"prod_cam_{st.session_state.cam_counter}")
+                scan_prod = back_camera_input("แตะเพื่อสแกนสินค้า", key=f"cam_prod_{st.session_state.cam_counter}")
                 if scan_prod:
                     res_p = decode(Image.open(scan_prod))
                     if res_p: st.session_state.prod_val = res_p[0].data.decode("utf-8"); st.rerun()
@@ -592,7 +570,7 @@ else:
                                 reset_all_data(); st.rerun()
 
     # =====================================================
-    # MODE 2: RIDER HANDOVER (แก้ไข Log ให้ลง Sheet LOGS)
+    # MODE 2: RIDER HANDOVER 
     # =====================================================
     elif st.session_state.app_mode == "DELIVERY":
         st.title("🏍️ ส่งงาน Rider")
@@ -603,14 +581,10 @@ else:
         col_r1, col_r2 = st.columns([3, 1])
         man_rider_ord = col_r1.text_input("พิมพ์ Order ID", key="rider_ord_man").strip().upper()
         
-        # NOTE: ใช้ input/scan เพื่อกำหนดค่า st.session_state.order_val สำหรับ Rider mode
         current_rider_order = ""
         if man_rider_ord: 
             current_rider_order = man_rider_ord
-        # elif scan_rider_ord: # Removed unused variable 'scan_rider_ord'
-        #     # Logic to handle camera scan for order ID if needed
-        #     pass
-
+        
         if current_rider_order:
             st.session_state.order_val = current_rider_order
             
@@ -626,7 +600,6 @@ else:
                     else:
                         st.error(f"❌ {folder_name}")
                         st.session_state.target_rider_folder_id = None
-                        # Allow retry by clearing the order_val
                         if st.button("สแกน Order ใหม่"): st.session_state.order_val = ""; st.rerun()
 
         # 2. ถ่ายรูป Rider
@@ -667,8 +640,7 @@ else:
                             # Upload (Pass bytes object)
                             uid = upload_photo(srv, st.session_state.rider_photo, fn, st.session_state.target_rider_folder_id)
                             
-                            # FIX: เปลี่ยนไปเรียก save_log_to_sheet (บันทึกใน Logs Sheet)
-                            # Log data matching the required format (image_90383e.png)
+                            # Log data matching the required format
                             save_log_to_sheet(
                                 st.session_state.current_user_name,
                                 st.session_state.order_val,
