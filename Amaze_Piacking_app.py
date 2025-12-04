@@ -23,7 +23,7 @@ st.markdown(
     <style>
     /* ขยายความสูงของ iframe ที่รันกล้อง (ปรับค่า min-height ให้สูงขึ้น) */
     iframe[title="streamlit_back_camera_input.back_camera_input"] {
-        min-height: 300px !important; 
+        min-height: 450px !important; 
         height: 150% !important;
     }
     /* ปรับแต่งตารางให้ดูง่ายขึ้น */
@@ -247,7 +247,12 @@ def reset_all_data():
     st.session_state.photo_gallery = [] 
     st.session_state.rider_photo = None
     st.session_state.picking_phase = 'scan'
-    st.session_state.temp_login_user = None # Ensure temp login is cleared
+    st.session_state.temp_login_user = None 
+    
+    # --- NEW: ล้างค่าในช่อง Input Text (ถ้ามี) ---
+    if 'pack_order_man' in st.session_state: st.session_state.pack_order_man = ""
+    if 'rider_ord_man' in st.session_state: st.session_state.rider_ord_man = ""
+    
     reset_for_next_item()
 
 def logout_user():
@@ -259,9 +264,8 @@ def logout_user():
 # --- UI SETUP ---
 st.set_page_config(page_title="Smart Picking System", page_icon="📦")
 
-# 🚩 FIX: Initialize ALL necessary session state variables robustly
+# 🚩 Initialize Session State
 def init_session_state():
-    # Use .get() for checking existence instead of direct indexing for safety
     if st.session_state.get('current_user_name') is None: st.session_state.current_user_name = ""
     if st.session_state.get('current_user_id') is None: st.session_state.current_user_id = ""
     if st.session_state.get('order_val') is None: st.session_state.order_val = ""
@@ -273,12 +277,12 @@ def init_session_state():
     if st.session_state.get('pick_qty') is None: st.session_state.pick_qty = 1
     if st.session_state.get('rider_photo') is None: st.session_state.rider_photo = None
     if st.session_state.get('current_order_items') is None: st.session_state.current_order_items = []
-    if st.session_state.get('picking_phase') is None: st.session_state.picking_phase = 'scan' # 'scan' or 'pack'
-    if st.session_state.get('temp_login_user') is None: st.session_state.temp_login_user = None # New variable for multi-step login
+    if st.session_state.get('picking_phase') is None: st.session_state.picking_phase = 'scan'
+    if st.session_state.get('temp_login_user') is None: st.session_state.temp_login_user = None
     
 init_session_state()
 
-# --- LOGIN (Simplified to fix flow/state issues) ---
+# --- LOGIN ---
 if not st.session_state.current_user_name:
     st.title("🔐 Login พนักงาน")
     df_users = load_sheet_data(USER_SHEET_NAME)
@@ -298,12 +302,9 @@ if not st.session_state.current_user_name:
             if res_u: user_input_val = res_u[0].data.decode("utf-8")
         
         if user_input_val:
-            # Check for empty state after scanning (which sometimes happens)
             if not df_users.empty and len(df_users.columns) >= 3:
-                # Col A = ID, Col B = Pass, Col C = Name
                 match = df_users[df_users.iloc[:, 0].astype(str) == str(user_input_val)]
                 if not match.empty:
-                    # Found User -> Go to Password step
                     st.session_state.temp_login_user = {
                         'id': str(user_input_val),
                         'pass': str(match.iloc[0, 1]).strip(), 
@@ -320,7 +321,6 @@ if not st.session_state.current_user_name:
         user_info = st.session_state.temp_login_user
         st.info(f"👤 พนักงาน: **{user_info['name']}** ({user_info['id']})")
         
-        # Use a new key for password input to prevent confusion with other text inputs
         password_input = st.text_input("🔑 กรุณากรอกรหัสผ่าน", type="password", key="login_pass_input").strip()
         
         c1, c2 = st.columns([1, 1])
@@ -362,10 +362,9 @@ else:
             st.stop()
 
         # -----------------------------------------------
-        # PHASE 1: SCANNING (สแกนของจนครบ)
+        # PHASE 1: SCANNING
         # -----------------------------------------------
         if st.session_state.picking_phase == 'scan':
-            # 1. ORDER
             st.markdown("#### 1. Order ID")
             if not st.session_state.order_val:
                 col1, col2 = st.columns([3, 1])
@@ -529,7 +528,7 @@ else:
                                 reset_all_data(); st.rerun()
 
     # =====================================================
-    # MODE 2: RIDER HANDOVER (เหมือนเดิม)
+    # MODE 2: RIDER HANDOVER
     # =====================================================
     elif mode == "🏍️ ส่งงาน Rider":
         st.title("🏍️ ส่งงาน Rider")
@@ -540,7 +539,7 @@ else:
         col_r1, col_r2 = st.columns([3, 1])
         man_rider_ord = col_r1.text_input("พิมพ์ Order ID", key="rider_ord_man").strip().upper()
         
-        #scan_rider_ord = back_camera_input("แตะเพื่อสแกน Order", key=f"rider_cam_ord_{st.session_state.cam_counter}")
+        scan_rider_ord = back_camera_input("แตะเพื่อสแกน Order", key=f"rider_cam_ord_{st.session_state.cam_counter}")
         
         current_rider_order = ""
         if man_rider_ord: current_rider_order = man_rider_ord
@@ -594,7 +593,7 @@ else:
                             
                             st.success("บันทึกรูป Rider สำเร็จ!")
                             time.sleep(1.5)
-                            st.session_state.order_val = ""
-                            st.session_state.target_rider_folder_id = None
-                            st.session_state.cam_counter += 1
+                            
+                            # เรียกใช้ reset_all_data() เพื่อล้างค่าทั้งหมดรวมถึง Order ID ในกล่องข้อความ
+                            reset_all_data() 
                             st.rerun()
