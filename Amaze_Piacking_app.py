@@ -23,7 +23,7 @@ st.markdown(
     <style>
     /* ขยายความสูงของ iframe ที่รันกล้อง (ปรับค่า min-height ให้สูงขึ้น) */
     iframe[title="streamlit_back_camera_input.back_camera_input"] {
-        min-height: 450px !important; 
+        min-height: 300px !important; 
         height: 150% !important;
     }
     /* ปรับแต่งตารางให้ดูง่ายขึ้น */
