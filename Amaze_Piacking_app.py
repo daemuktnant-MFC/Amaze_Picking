@@ -36,7 +36,7 @@ div[data-testid="stDataFrame"] {
 # ==================================
 
 # --- CONFIGURATION ---
-MAIN_FOLDER_ID = '1FHfyzzTzkK5PaKx6oQeFxTbLEq-Tmii7'
+MAIN_FOLDER_ID = '1FHfyzzTzkL5PaKx6oQeFxTbLEq-Tmii7'
 SHEET_ID = '1jNlztb3vfG0c8sw_bMTuA9GEqircx_uVE7uywd5dR2I'
 LOG_SHEET_NAME = 'Logs'
 RIDER_SHEET_NAME = 'Rider_Logs'
@@ -358,7 +358,8 @@ else:
              current_sidebar_mode = "🛵 ส่งงาน Rider"
         
         # ตรวจสอบว่าโหมดปัจจุบันเป็นโหมดที่ต้องถูกล็อกหรือไม่
-        is_in_packing_flow = st.session_state.picking_phase == 'pack' and st.session_state.order_val
+        # FIX: ต้องตรวจสอบ app_mode ก่อนใช้ picking_phase เพราะ picking_phase ถูกใช้ใน PICKING flow เท่านั้น
+        is_in_packing_flow = (st.session_state.app_mode == "PICKING" and st.session_state.picking_phase == 'pack' and st.session_state.order_val)
         
         selected_mode_display = st.radio(
             "เลือกโหมดทำงาน:",
