@@ -4,6 +4,7 @@ import gspread
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.errors import HttpError # Import HttpError
 from datetime import datetime, timedelta
 from PIL import Image
 from pyzbar.pyzbar import decode 
@@ -153,48 +154,64 @@ def get_thai_ts_filename():
 # 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED)
 # ==============================================================================
 def get_target_folder_structure(service, order_id, main_parent_id):
-    date_folder_name = get_thai_date_str()
-    
-    q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    res_date = service.files().list(q=q_date, fields="files(id)").execute()
-    files_date = res_date.get('files', [])
-    
-    if files_date:
-        date_folder_id = files_date[0]['id']
-    else:
-        meta_date = {'name': date_folder_name, 'parents': [main_parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
-        date_folder = service.files().create(body=meta_date, fields='id').execute()
-        date_folder_id = date_folder.get('id')
+    try:
+        date_folder_name = get_thai_date_str()
         
-    time_suffix = get_thai_time_suffix()
-    order_folder_name = f"{order_id}_{time_suffix}"
-    
-    meta_order = {'name': order_folder_name, 'parents': [date_folder_id], 'mimeType': 'application/vnd.google-apps.folder'}
-    order_folder = service.files().create(body=meta_order, fields='id').execute()
-    
-    return order_folder.get('id')
+        q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        res_date = service.files().list(q=q_date, fields="files(id)").execute()
+        files_date = res_date.get('files', [])
+        
+        if files_date:
+            date_folder_id = files_date[0]['id']
+        else:
+            meta_date = {'name': date_folder_name, 'parents': [main_parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
+            # ERROR OCCURS HERE: service.files().create(...)
+            date_folder = service.files().create(body=meta_date, fields='id').execute()
+            date_folder_id = date_folder.get('id')
+            
+        time_suffix = get_thai_time_suffix()
+        order_folder_name = f"{order_id}_{time_suffix}"
+        
+        meta_order = {'name': order_folder_name, 'parents': [date_folder_id], 'mimeType': 'application/vnd.google-apps.folder'}
+        order_folder = service.files().create(body=meta_order, fields='id').execute()
+        
+        return order_folder.get('id')
+    except HttpError as e:
+        st.error(f"🔴 Google API Error (Folder Creation): ตรวจสอบสิทธิ์การเข้าถึง Drive หรือ Refresh Token")
+        raise e # Re-raise the error to stop execution
+    except Exception as e:
+        st.error(f"🔴 Error during Folder Structure creation: {e}")
+        raise e
 # ==============================================================================
 # END CRITICAL SECTION
 # ==============================================================================
 
 def find_existing_order_folder(service, order_id, main_parent_id):
-    date_folder_name = get_thai_date_str()
-    q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    res_date = service.files().list(q=q_date, fields="files(id)").execute()
-    files_date = res_date.get('files', [])
-    
-    if not files_date:
-        return None, "ไม่พบ Folder วันที่ของวันนี้ (ยังไม่มีการเปิดบิลวันนี้)"
-    
-    date_folder_id = files_date[0]['id']
-    q_order = f"'{date_folder_id}' in parents and name contains '{order_id}_' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    res_order = service.files().list(q=q_order, fields="files(id, name)", orderBy="createdTime desc").execute()
-    files_order = res_order.get('files', [])
-    
-    if files_order:
-        return files_order[0]['id'], files_order[0]['name']
-    else:
-        return None, f"ไม่พบ Folder ของ Order: {order_id} ในวันนี้"
+    try:
+        date_folder_name = get_thai_date_str()
+        q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        res_date = service.files().list(q=q_date, fields="files(id)").execute()
+        files_date = res_date.get('files', [])
+        
+        if not files_date:
+            return None, "ไม่พบ Folder วันที่ของวันนี้ (ยังไม่มีการเปิดบิลวันนี้)"
+        
+        date_folder_id = files_date[0]['id']
+        q_order = f"'{date_folder_id}' in parents and name contains '{order_id}_' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        res_order = service.files().list(q=q_order, fields="files(id, name)", orderBy="createdTime desc").execute()
+        files_order = res_order.get('files', [])
+        
+        if files_order:
+            return files_order[0]['id'], files_order[0]['name']
+        else:
+            return None, f"ไม่พบ Folder ของ Order: {order_id} ในวันนี้"
+    except HttpError as e:
+        st.error(f"🔴 Google API Error (Folder Search): ตรวจสอบสิทธิ์การเข้าถึง Drive หรือ Refresh Token")
+        return None, "เกิดข้อผิดพลาดในการค้นหา Drive Folder"
+    except Exception as e:
+        st.error(f"🔴 Error during Folder Search: {e}")
+        return None, "เกิดข้อผิดพลาดในการค้นหา Folder"
+
 
 def upload_photo(service, file_obj, filename, folder_id):
     try:
