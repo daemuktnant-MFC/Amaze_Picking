@@ -342,7 +342,7 @@ else:
             options=list(mode_options.keys()),
             index=list(mode_options.keys()).index(current_sidebar_mode),
             key="sidebar_mode_selector_radio",
-            index=0
+            #index=0
         )
         
         # Logic เปลี่ยน app_mode เมื่อมีการเลือกใน Sidebar
