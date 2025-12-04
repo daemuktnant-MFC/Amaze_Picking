@@ -358,8 +358,8 @@ else:
              current_sidebar_mode = "🛵 ส่งงาน Rider"
         
         # ตรวจสอบว่าโหมดปัจจุบันเป็นโหมดที่ต้องถูกล็อกหรือไม่
-        # FIX: ต้องตรวจสอบ app_mode ก่อนใช้ picking_phase เพราะ picking_phase ถูกใช้ใน PICKING flow เท่านั้น
-        is_in_packing_flow = (st.session_state.app_mode == "PICKING" and st.session_state.picking_phase == 'pack' and st.session_state.order_val)
+        # FIX: ตรวจสอบเฉพาะ app_mode และ picking_phase ที่แน่นอนเท่านั้น
+        is_in_packing_flow = (st.session_state.app_mode == "PICKING" and st.session_state.picking_phase == 'pack')
         
         selected_mode_display = st.radio(
             "เลือกโหมดทำงาน:",
