@@ -135,12 +135,31 @@ def find_existing_order_folder(service, order_id, main_parent_id):
     date_folder_name = get_thai_date_str()
     q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res_date = service.files().list(q=q_date, fields="files(id)").execute(); files_date = res_date.get('files', [])
-    if not files_date: return None, "ไม่พบ Folder วันที่ของวันนี้ (ยังไม่มีการเปิดบิลวันนี้)"
+    
+    if not files_date: 
+        return None, "ไม่พบ Folder วันที่ของวันนี้ (ยังไม่มีการเปิดบิลวันนี้)"
+    
     date_folder_id = files_date[0]['id']
-    q_order = f"'{date_folder_id}' in parents and name contains '{order_id}_' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    res_order = service.files().list(q=q_order, fields="files(id, name)", orderBy="createdTime desc").execute(); files_order = res_order.get('files', [])
-    if files_order: return files_order[0]['id'], files_order[0]['name']
-    else: return None, f"ไม่พบ Folder ของ Order: {order_id} ในวันนี้"
+    
+    # --- FIX LOGIC: Search Broadly, Filter Strictly ---
+    # 1. ค้นหา Folder ที่ชื่อมีคำว่า order_id (แบบกว้างๆ)
+    q_order = f"'{date_folder_id}' in parents and name contains '{order_id}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    res_order = service.files().list(q=q_order, fields="files(id, name)", orderBy="createdTime desc").execute()
+    files_order = res_order.get('files', [])
+    
+    # 2. กรองใน Python เพื่อความแม่นยำ 100% ว่าต้องขึ้นต้นด้วย "ORDERID_" เท่านั้น
+    target_prefix = f"{order_id}_" # เช่น "B01_"
+    
+    found_folder = None
+    for f in files_order:
+        if f['name'].startswith(target_prefix):
+            found_folder = f
+            break
+            
+    if found_folder:
+        return found_folder['id'], found_folder['name']
+    else:
+        return None, f"ไม่พบ Folder ของ Order: {order_id} ในวันนี้"
 
 def upload_photo(service, file_obj, filename, folder_id):
     try:
@@ -152,21 +171,19 @@ def upload_photo(service, file_obj, filename, folder_id):
         return file.get('id')
     except Exception as e: raise e
 
-# --- SAFE RESET SYSTEM (แก้ Error StreamlitAPIException) ---
+# --- SAFE RESET SYSTEM ---
 def trigger_reset():
-    """ตั้งค่า Flag ว่าต้องล้างข้อมูลเมื่อเริ่มรันรอบหน้า"""
     st.session_state.need_reset = True
 
 def check_and_execute_reset():
-    """ฟังก์ชันนี้จะทำงานเป็นอย่างแรกสุด เพื่อล้างค่าก่อนสร้าง Widget"""
     if st.session_state.get('need_reset'):
-        # ล้างค่าในกล่องข้อความ (Key ของ Widget)
+        # Reset Widgets
         if 'pack_order_man' in st.session_state: st.session_state.pack_order_man = ""
         if 'rider_ord_man' in st.session_state: st.session_state.rider_ord_man = ""
         if 'pack_prod_man' in st.session_state: st.session_state.pack_prod_man = ""
         if 'loc_man' in st.session_state: st.session_state.loc_man = ""
         
-        # ล้างค่าตัวแปรระบบ
+        # Reset State Variables
         st.session_state.order_val = ""
         st.session_state.current_order_items = []
         st.session_state.photo_gallery = [] 
@@ -174,14 +191,17 @@ def check_and_execute_reset():
         st.session_state.picking_phase = 'scan'
         st.session_state.temp_login_user = None
         
-        # Reset ตัวช่วยอื่นๆ
+        # --- NEW: Clear Target Folder State to avoid stale data ---
+        st.session_state.target_rider_folder_id = None
+        st.session_state.target_rider_folder_name = ""
+        
+        # Reset Helpers
         st.session_state.prod_val = ""
         st.session_state.loc_val = ""
         st.session_state.prod_display_name = ""
         st.session_state.pick_qty = 1 
         st.session_state.cam_counter += 1
         
-        # ปิด Flag
         st.session_state.need_reset = False
 
 def logout_user():
@@ -193,11 +213,11 @@ def logout_user():
 # --- UI SETUP ---
 st.set_page_config(page_title="Smart Picking System", page_icon="📦")
 
-# Init Session State
 def init_session_state():
     if 'need_reset' not in st.session_state: st.session_state.need_reset = False
     keys = ['current_user_name', 'current_user_id', 'order_val', 'prod_val', 'loc_val', 'prod_display_name', 
-            'photo_gallery', 'cam_counter', 'pick_qty', 'rider_photo', 'current_order_items', 'picking_phase', 'temp_login_user']
+            'photo_gallery', 'cam_counter', 'pick_qty', 'rider_photo', 'current_order_items', 'picking_phase', 'temp_login_user',
+            'target_rider_folder_id', 'target_rider_folder_name'] # Added target folder vars
     for k in keys:
         if k not in st.session_state:
             if k == 'pick_qty': st.session_state[k] = 1
@@ -205,11 +225,9 @@ def init_session_state():
             elif k == 'photo_gallery': st.session_state[k] = []
             elif k == 'current_order_items': st.session_state[k] = []
             elif k == 'picking_phase': st.session_state[k] = 'scan'
-            else: st.session_state[k] = None if k == 'temp_login_user' else ""
+            else: st.session_state[k] = None if k in ['temp_login_user', 'target_rider_folder_id'] else ""
 
 init_session_state()
-
-# 🔥 เรียกใช้ฟังก์ชันล้างค่า ตรงนี้! (ก่อนสร้าง Widget ใดๆ) 🔥
 check_and_execute_reset()
 
 # --- LOGIN ---
@@ -330,7 +348,6 @@ else:
                                     new_item = {"Barcode": st.session_state.prod_val, "Product Name": st.session_state.prod_display_name, "Location": st.session_state.loc_val, "Qty": st.session_state.pick_qty}
                                     st.session_state.current_order_items.append(new_item)
                                     st.toast(f"เพิ่ม {st.session_state.prod_display_name} แล้ว!", icon="🛒")
-                                    # Reset Item
                                     st.session_state.prod_val = ""; st.session_state.loc_val = ""; st.session_state.pick_qty = 1; st.session_state.cam_counter += 1
                                     st.rerun()
                             else:
@@ -384,9 +401,7 @@ else:
                                 for item in st.session_state.current_order_items:
                                     save_log_to_sheet(st.session_state.current_user_name, st.session_state.order_val, item['Barcode'], item['Product Name'], item['Location'], item['Qty'], st.session_state.current_user_id, first_id)
                                 st.balloons(); st.success("✅ บันทึกครบทุกรายการเรียบร้อย!"); time.sleep(1.5)
-                                # ใช้ระบบ Safe Reset
-                                trigger_reset()
-                                st.rerun()
+                                trigger_reset(); st.rerun()
 
     # ================= MODE 2: RIDER =================
     elif mode == "🏍️ ส่งงาน Rider":
@@ -397,7 +412,7 @@ else:
         col_r1, col_r2 = st.columns([3, 1])
         man_rider_ord = col_r1.text_input("พิมพ์ Order ID", key="rider_ord_man").strip().upper()
         
-        # --- กำหนดตัวแปรกล้องก่อน if เสมอ เพื่อแก้ NameError ---
+        # Camera Input
         scan_rider_ord = back_camera_input("แตะเพื่อสแกน Order", key=f"rider_cam_ord_{st.session_state.cam_counter}")
         
         current_rider_order = ""
@@ -415,7 +430,10 @@ else:
                     if folder_id:
                         st.success(f"✅ เจอ Folder: **{folder_name}**")
                         st.session_state.target_rider_folder_id = folder_id; st.session_state.target_rider_folder_name = folder_name
-                    else: st.error(f"❌ {folder_name}"); st.session_state.target_rider_folder_id = None
+                    else: 
+                        st.error(f"❌ {folder_name}")
+                        st.session_state.target_rider_folder_id = None
+                        st.session_state.target_rider_folder_name = ""
 
         if st.session_state.get('target_rider_folder_id') and st.session_state.order_val:
             st.markdown("---"); st.markdown(f"#### 2. ถ่ายรูปส่งมอบ ({st.session_state.target_rider_folder_name})")
@@ -437,6 +455,4 @@ else:
                             save_rider_log(st.session_state.current_user_name, st.session_state.order_val, uid, st.session_state.target_rider_folder_name)
                             st.success("บันทึกรูป Rider สำเร็จ!")
                             time.sleep(1.5)
-                            # ใช้ระบบ Safe Reset
-                            trigger_reset()
-                            st.rerun()
+                            trigger_reset(); st.rerun()
