@@ -108,16 +108,8 @@ def load_sheet_data(sheet_name=0):
     except Exception as e:
         return pd.DataFrame()
 
-# --- TIME HELPER (UTC+7) ---
-def get_thai_time():
-    return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
-def get_thai_date_str():
-    return (datetime.utcnow() + timedelta(hours=7)).strftime("%d-%m-%Y")
-def get_thai_time_suffix():
-    return (datetime.utcnow() + timedelta(hours=7)).strftime("%H-%M")
-def get_thai_ts_filename():
-    return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y%m%d_%H%M%S")
-
+# NOTE: save_log_to_sheet เดิมถูกออกแบบมาเพื่อรับรายการเดียว ซึ่งถูกเรียกใช้ในการ Loop ในโหมด PACK
+# แต่สามารถ reuse ในโหมด RIDER ได้โดยการเรียกใช้เพียงครั้งเดียว
 def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_qty, user_col, file_id):
     try:
         creds = get_credentials()
@@ -148,22 +140,20 @@ def save_log_to_sheet(picker_name, order_id, barcode, prod_name, location, pick_
     except Exception as e:
         st.warning(f"⚠️ บันทึก Log ไม่สำเร็จ: {e}")
 
+# NOTE: ฟังก์ชันนี้จะถูกยกเลิกการเรียกใช้ในโหมด RIDER เพื่อให้ไปบันทึกรวมใน Logs แทน
 def save_rider_log(picker_name, order_id, file_id, folder_name):
-    try:
-        creds = get_credentials()
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_key(SHEET_ID)
-        try:
-            worksheet = sh.worksheet(RIDER_SHEET_NAME)
-        except:
-            worksheet = sh.add_worksheet(title=RIDER_SHEET_NAME, rows="1000", cols="10")
-            worksheet.append_row(["Timestamp", "User Name", "Order ID", "Folder Name", "Rider Image Link"])
-            
-        timestamp = get_thai_time()
-        image_link = f"https://drive.google.com/open?id={file_id}"
-        worksheet.append_row([timestamp, picker_name, order_id, folder_name, image_link])
-    except Exception as e:
-        st.warning(f"⚠️ บันทึก Rider Log ไม่สำเร็จ: {e}")
+    # DUMMY function, will be replaced by direct call to save_log_to_sheet in RIDER mode
+    pass 
+
+# --- TIME HELPER (UTC+7) ---
+def get_thai_time():
+    return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+def get_thai_date_str():
+    return (datetime.utcnow() + timedelta(hours=7)).strftime("%d-%m-%Y")
+def get_thai_time_suffix():
+    return (datetime.utcnow() + timedelta(hours=7)).strftime("%H-%M")
+def get_thai_ts_filename():
+    return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y%m%d_%H%M%S")
 
 # ==============================================================================
 # 🔒 CRITICAL SECTION: FOLDER STRUCTURE (LOCKED)
@@ -248,6 +238,9 @@ def reset_all_data():
     st.session_state.rider_photo = None
     st.session_state.picking_phase = 'scan'
     st.session_state.temp_login_user = None # Ensure temp login is cleared
+    # Clear Rider-specific states
+    if 'target_rider_folder_id' in st.session_state: del st.session_state.target_rider_folder_id
+    if 'target_rider_folder_name' in st.session_state: del st.session_state.target_rider_folder_name
     reset_for_next_item()
 
 def logout_user():
@@ -259,9 +252,22 @@ def logout_user():
 # --- UI SETUP ---
 st.set_page_config(page_title="Smart Picking System", page_icon="📦")
 
-# 🚩 FIX: Initialize ALL necessary session state variables robustly
+# === CSS INJECTION: ปรับขนาดกล้อง ===
+st.markdown("""
+<style>
+/* บังคับขยาย iframe ของ back_camera_input ให้สูงขึ้น */
+iframe[title="streamlit_back_camera_input.back_camera_input"] {
+    min-height: 250px !important;  /* เพิ่มความสูงขั้นต่ำ (จากเดิมมักจะ 300px) */
+    transform: scale(1.1); /* ขยาย Scale เล็กน้อยเพื่อให้เต็มตา */
+    transform-origin: top center;
+    margin-bottom: 20px;
+}
+</style>
+""", unsafe_allow_html=True)
+# ==================================
+
+# 🚩 Initialize ALL necessary session state variables robustly
 def init_session_state():
-    # Use .get() for checking existence instead of direct indexing for safety
     if st.session_state.get('current_user_name') is None: st.session_state.current_user_name = ""
     if st.session_state.get('current_user_id') is None: st.session_state.current_user_id = ""
     if st.session_state.get('order_val') is None: st.session_state.order_val = ""
@@ -275,6 +281,7 @@ def init_session_state():
     if st.session_state.get('current_order_items') is None: st.session_state.current_order_items = []
     if st.session_state.get('picking_phase') is None: st.session_state.picking_phase = 'scan' # 'scan' or 'pack'
     if st.session_state.get('temp_login_user') is None: st.session_state.temp_login_user = None # New variable for multi-step login
+    if st.session_state.get('last_user_input') is None: st.session_state.last_user_input = ""
     
 init_session_state()
 
@@ -287,7 +294,11 @@ if not st.session_state.current_user_name:
         st.info("กรุณาสแกนรหัสพนักงาน")
         
         col1, col2 = st.columns([3, 1])
-        manual_user = col1.text_input("พิมพ์รหัสพนักงาน", key="input_user_manual").strip()
+        
+        # FIX: ใช้ value=st.session_state.last_user_input ในการควบคุมและล้างค่า
+        manual_user_key = "input_user_manual_step1"
+        manual_user = col1.text_input("พิมพ์รหัสพนักงาน", key=manual_user_key, value=st.session_state.last_user_input).strip()
+        
         cam_key_user = f"cam_user_{st.session_state.cam_counter}"
         scan_user = back_camera_input("แตะเพื่อสแกนบัตรพนักงาน", key=cam_key_user)
         
@@ -297,8 +308,11 @@ if not st.session_state.current_user_name:
             res_u = decode(Image.open(scan_user))
             if res_u: user_input_val = res_u[0].data.decode("utf-8")
         
+        # ตรวจสอบ ID ที่เพิ่งเข้ามา
         if user_input_val:
-            # Check for empty state after scanning (which sometimes happens)
+            # *CRITICAL FIX*: ล้างค่า Manual Input ใน Session State เพื่อเคลียร์ช่องพิมพ์
+            st.session_state.last_user_input = "" 
+            
             if not df_users.empty and len(df_users.columns) >= 3:
                 # Col A = ID, Col B = Pass, Col C = Name
                 match = df_users[df_users.iloc[:, 0].astype(str) == str(user_input_val)]
@@ -343,131 +357,180 @@ if not st.session_state.current_user_name:
 
 else:
     # --- LOGGED IN ---
+    # --- START SIDEBAR LOGIC ---
     with st.sidebar:
         st.write(f"👤 **{st.session_state.current_user_name}**")
-        mode = st.radio("เลือกโหมดทำงาน:", ["📦 แผนกแพ็คสินค้า", "🏍️ ส่งงาน Rider"])
         st.divider()
-        if st.button("Logout", type="secondary"):
-            logout_user()
-
-    # =====================================================
-    # MODE 1: PACKING
-    # =====================================================
-    if mode == "📦 แผนกแพ็คสินค้า":
-        st.title("📦 ระบบเบิก-แพ็คสินค้า")
         
-        df_items = load_sheet_data(0)
-        if not df_items.empty and 'Barcode' not in df_items.columns:
-            st.error("❌ ไม่พบคอลัมน์ 'Barcode' ใน Sheet!")
-            st.stop()
+        # กำหนด Option และค่าปัจจุบันสำหรับการแสดงผล
+        mode_options = {
+            "📦 แผนกแพ็คสินค้า": "PICKING",
+            "🛵 ส่งงาน Rider": "DELIVERY"
+        }
+        
+        # ปรับค่าเริ่มต้นของ Radio ให้ตรงกับ app_mode
+        current_sidebar_mode = "📦 แผนกแพ็คสินค้า"
+        if st.session_state.app_mode == "DELIVERY":
+             current_sidebar_mode = "🛵 ส่งงาน Rider"
+        
+        # ตรวจสอบว่าโหมดปัจจุบันเป็นโหมดที่ต้องถูกล็อกหรือไม่
+        is_in_packing_flow = st.session_state.picking_phase == 'pack' and st.session_state.order_val
+        
+        selected_mode_display = st.radio(
+            "เลือกโหมดทำงาน:",
+            options=list(mode_options.keys()),
+            index=list(mode_options.keys()).index(current_sidebar_mode),
+            key="sidebar_mode_selector_radio",
+            disabled=is_in_packing_flow # ล็อกการเลือกโหมดอื่นเมื่ออยู่ใน PACKING
+        )
+        
+        # Logic เปลี่ยน app_mode เมื่อมีการเลือกใน Sidebar
+        new_app_mode = mode_options[selected_mode_display]
+        
+        # FIX: แก้ไข Logic การสลับโหมดให้ถูกต้อง
+        if new_app_mode == "DELIVERY" and st.session_state.picking_phase != 'scan':
+            # หากพยายามเปลี่ยนไป Rider แต่ยังอยู่ใน PACK/SCAN ของ PICKING flow
+            st.session_state.picking_phase = 'scan'
+            st.session_state.current_order_items = []
+            st.session_state.order_val = ""
+            
+        if new_app_mode != st.session_state.app_mode and not is_in_packing_flow:
+            st.session_state.app_mode = new_app_mode
+            st.session_state.photo_gallery = [] # Clear gallery when switching mode
+            st.rerun()
+        
+        # แสดงคำเตือนถ้าพยายามสลับโหมดขณะอยู่ใน PACKING
+        if is_in_packing_flow:
+            st.warning("⚠️ กรุณายืนยัน Upload ในหน้าหลักก่อนเปลี่ยนโหมด")
+            
+        st.divider()
+        if st.button("Logout", type="secondary"): logout_user()
 
+    # --- END SIDEBAR LOGIC ---
+    
+    # --- MAIN CONTENT ---
+    st.title("📦 ระบบเบิกสินค้า")
+    st.caption(f"👤: **{st.session_state.current_user_name}** | Mode: {current_sidebar_mode}")
+    
+    # *NEW ADVICE FOR MOBILE USERS*
+    if not st.session_state.order_val:
+        st.info("💡 **ผู้ใช้มือถือ:** แตะที่ปุ่ม `>>` หรือ `☰` ที่มุมบนซ้ายเพื่อเลือกโหมดทำงาน")
+    
+    df_items = load_sheet_data(0)
+
+    # =====================================================
+    # MODE 1: PACKING FLOW
+    # =====================================================
+    if st.session_state.app_mode == "PICKING":
+        
         # -----------------------------------------------
-        # PHASE 1: SCANNING (สแกนของจนครบ)
+        # PHASE 1 & 2 LOGIC (SAME AS BEFORE)
         # -----------------------------------------------
-        if st.session_state.picking_phase == 'scan':
-            # 1. ORDER
-            st.markdown("#### 1. Order ID")
-            if not st.session_state.order_val:
-                col1, col2 = st.columns([3, 1])
-                manual_order = col1.text_input("พิมพ์ Order ID", key="pack_order_man").strip().upper()
-                if manual_order:
-                    st.session_state.order_val = manual_order
+        
+        # 1. ORDER
+        st.markdown("#### 1. Order ID")
+        if not st.session_state.order_val:
+            col1, col2 = st.columns([3, 1])
+            manual_order = col1.text_input("พิมพ์ Order ID", key="pack_order_man").strip().upper()
+            if manual_order:
+                st.session_state.order_val = manual_order
+                st.rerun()
+            
+            scan_order = back_camera_input("แตะเพื่อสแกน Order", key=f"pack_cam_{st.session_state.cam_counter}")
+            if scan_order:
+                res = decode(Image.open(scan_order))
+                if res:
+                    st.session_state.order_val = res[0].data.decode("utf-8").upper()
                     st.rerun()
+        else:
+            c1, c2 = st.columns([3, 1])
+            with c1: st.success(f"📦 Order: **{st.session_state.order_val}**")
+            with c2: 
+                if st.button("เปลี่ยน Order"): reset_all_data(); st.rerun()
+
+        # PHASE 1: SCANNING (สแกนของจนครบ)
+        if st.session_state.order_val and st.session_state.picking_phase == 'scan':
+            st.markdown("---")
+            st.markdown("#### 2. เพิ่มรายการสินค้า (Scan & Add)")
+            
+            # Input
+            if not st.session_state.prod_val:
+                col1, col2 = st.columns([3, 1])
+                manual_prod = col1.text_input("พิมพ์ Barcode", key="pack_prod_man").strip()
+                if manual_prod: st.session_state.prod_val = manual_prod; st.rerun()
                 
-                scan_order = back_camera_input("แตะเพื่อสแกน Order", key=f"pack_cam_{st.session_state.cam_counter}")
-                if scan_order:
-                    res = decode(Image.open(scan_order))
-                    if res:
-                        st.session_state.order_val = res[0].data.decode("utf-8").upper()
-                        st.rerun()
+                scan_prod = back_camera_input("แตะเพื่อสแกนสินค้า", key=f"prod_cam_{st.session_state.cam_counter}")
+                if scan_prod:
+                    res_p = decode(Image.open(scan_prod))
+                    if res_p: st.session_state.prod_val = res_p[0].data.decode("utf-8"); st.rerun()
             else:
-                c1, c2 = st.columns([3, 1])
-                with c1: st.success(f"📦 Order: **{st.session_state.order_val}**")
-                with c2: 
-                    if st.button("เปลี่ยน Order"): reset_all_data(); st.rerun()
-
-            # 2. SCAN ITEMS LOOP
-            if st.session_state.order_val:
-                st.markdown("---")
-                st.markdown("#### 2. เพิ่มรายการสินค้า (Scan & Add)")
-                
-                # Input
-                if not st.session_state.prod_val:
-                    col1, col2 = st.columns([3, 1])
-                    manual_prod = col1.text_input("พิมพ์ Barcode", key="pack_prod_man").strip()
-                    if manual_prod: st.session_state.prod_val = manual_prod; st.rerun()
+                # Verify
+                target_loc_str = None
+                prod_found = False
+                if not df_items.empty:
+                    match = df_items[df_items['Barcode'] == st.session_state.prod_val]
+                    if not match.empty:
+                        prod_found = True
+                        row = match.iloc[0]
+                        try:
+                            brand = str(row.iloc[3]); variant = str(row.iloc[5])
+                            full_name = f"{brand} {variant}"
+                        except: full_name = "Error Name"
+                        st.session_state.prod_display_name = full_name
+                        target_loc_str = f"{str(row.get('Zone','')).strip()}-{str(row.get('Location','')).strip()}"
+                        st.success(f"✅ **{full_name}**"); st.warning(f"📍 เป้าหมาย: **{target_loc_str}**")
+                    else: st.error("❌ ไม่พบ Barcode")
+                else: st.warning("⚠️ Loading Data...")
                     
-                    scan_prod = back_camera_input("แตะเพื่อสแกนสินค้า", key=f"prod_cam_{st.session_state.cam_counter}")
-                    if scan_prod:
-                        res_p = decode(Image.open(scan_prod))
-                        if res_p: st.session_state.prod_val = res_p[0].data.decode("utf-8"); st.rerun()
-                else:
-                    # Verify
-                    target_loc_str = None
-                    prod_found = False
-                    if not df_items.empty:
-                        match = df_items[df_items['Barcode'] == st.session_state.prod_val]
-                        if not match.empty:
-                            prod_found = True
-                            row = match.iloc[0]
-                            try:
-                                brand = str(row.iloc[3]); variant = str(row.iloc[5])
-                                full_name = f"{brand} {variant}"
-                            except: full_name = "Error Name"
-                            st.session_state.prod_display_name = full_name
-                            target_loc_str = f"{str(row.get('Zone','')).strip()}-{str(row.get('Location','')).strip()}"
-                            st.success(f"✅ **{full_name}**"); st.warning(f"📍 เป้าหมาย: **{target_loc_str}**")
-                        else: st.error("❌ ไม่พบ Barcode")
-                    else: st.warning("⚠️ Loading Data...")
-                    
-                    if st.button("❌ สแกนใหม่"): reset_for_next_item(); st.rerun()
+                if st.button("❌ สแกนใหม่"): reset_for_next_item(); st.rerun()
 
-                    # Location & Qty
-                    if prod_found and target_loc_str:
-                        st.markdown("---")
-                        st.markdown("##### ยืนยัน Location")
-                        if not st.session_state.loc_val:
-                            man_loc = st.text_input("Scan/พิมพ์ Location", key="loc_man").strip().upper()
-                            if man_loc: st.session_state.loc_val = man_loc; st.rerun()
-                            scan_loc = back_camera_input("แตะเพื่อสแกน Location", key=f"loc_cam_{st.session_state.cam_counter}")
-                            if scan_loc:
-                                res_l = decode(Image.open(scan_loc))
-                                if res_l: st.session_state.loc_val = res_l[0].data.decode("utf-8").upper(); st.rerun()
-                        else:
-                            if st.session_state.loc_val == target_loc_str or st.session_state.loc_val in target_loc_str:
-                                st.success(f"✅ ถูกต้อง: {st.session_state.loc_val}")
-                                st.markdown("##### ระบุจำนวน")
-                                st.session_state.pick_qty = st.number_input("จำนวน (Qty)", min_value=1, value=1)
-                                
-                                st.markdown("---")
-                                if st.button("➕ เพิ่มลงตะกร้า", type="primary", use_container_width=True):
-                                    new_item = {
-                                        "Barcode": st.session_state.prod_val,
-                                        "Product Name": st.session_state.prod_display_name,
-                                        "Location": st.session_state.loc_val,
-                                        "Qty": st.session_state.pick_qty
-                                    }
-                                    st.session_state.current_order_items.append(new_item)
-                                    st.toast(f"เพิ่ม {st.session_state.prod_display_name} แล้ว!", icon="🛒")
-                                    reset_for_next_item(); st.rerun()
-                            else:
-                                st.error(f"❌ ผิดตำแหน่ง ({st.session_state.loc_val})")
-                                if st.button("แก้ Location"): st.session_state.loc_val = ""; st.rerun()
-
-                # BASKET & CONFIRM BUTTON
-                if st.session_state.current_order_items:
+                # Location & Qty
+                if prod_found and target_loc_str:
                     st.markdown("---")
-                    st.markdown(f"### 🛒 ตะกร้าสินค้า ({len(st.session_state.current_order_items)} รายการ)")
-                    st.dataframe(pd.DataFrame(st.session_state.current_order_items), use_container_width=True)
-                    
-                    if st.button("✅ ยืนยันรายการครบแล้ว (ไปถ่ายรูป)", type="primary", use_container_width=True):
-                        st.session_state.picking_phase = 'pack'
-                        st.rerun()
+                    st.markdown("##### ยืนยัน Location")
+                    if not st.session_state.loc_val:
+                        man_loc = st.text_input("Scan/พิมพ์ Location", key="loc_man").strip().upper()
+                        if man_loc: st.session_state.loc_val = man_loc; st.rerun()
+                        scan_loc = back_camera_input("แตะเพื่อสแกน Location", key=f"loc_cam_{st.session_state.cam_counter}")
+                        if scan_loc:
+                            res_l = decode(Image.open(scan_loc))
+                            if res_l: st.session_state.loc_val = res_l[0].data.decode("utf-8").upper(); st.rerun()
+                    else:
+                        if st.session_state.loc_val == target_loc_str or st.session_state.loc_val in target_loc_str:
+                            st.success(f"✅ ถูกต้อง: {st.session_state.loc_val}")
+                            st.markdown("##### ระบุจำนวน")
+                            st.session_state.pick_qty = st.number_input("จำนวน (Qty)", min_value=1, value=1)
+                            
+                            st.markdown("---")
+                            if st.button("➕ เพิ่มลงตะกร้า", type="primary", use_container_width=True):
+                                new_item = {
+                                    "Barcode": st.session_state.prod_val,
+                                    "Product Name": st.session_state.prod_display_name,
+                                    "Location": st.session_state.loc_val,
+                                    "Qty": st.session_state.pick_qty
+                                }
+                                st.session_state.current_order_items.append(new_item)
+                                st.toast(f"เพิ่ม {st.session_state.prod_display_name} แล้ว!", icon="🛒")
+                                reset_for_next_item(); st.rerun()
+                            else:
+                                pass # Wait for user action
+                        else:
+                            st.error(f"❌ ผิดตำแหน่ง ({st.session_state.loc_val})")
+                            if st.button("แก้ Location"): st.session_state.loc_val = ""; st.rerun()
 
-        # -----------------------------------------------
+            # BASKET & CONFIRM BUTTON
+            if st.session_state.current_order_items:
+                st.markdown("---")
+                st.markdown(f"### 🛒 ตะกร้าสินค้า ({len(st.session_state.current_order_items)} รายการ)")
+                st.dataframe(pd.DataFrame(st.session_state.current_order_items), use_container_width=True)
+                
+                # FIX: ปุ่มนี้จะเปลี่ยน picking_phase เป็น 'pack'
+                if st.button("✅ ยืนยันรายการครบแล้ว (ไปถ่ายรูป)", type="primary", use_container_width=True):
+                    st.session_state.picking_phase = 'pack'
+                    st.rerun()
+
         # PHASE 2: PACKING (ถ่ายรูป & Upload)
-        # -----------------------------------------------
-        elif st.session_state.picking_phase == 'pack':
+        elif st.session_state.order_val and st.session_state.picking_phase == 'pack':
             st.success(f"📦 Order: **{st.session_state.order_val}** (ยืนยันแล้ว)")
             
             st.info("รายการสินค้าที่จะแพ็ค:")
@@ -529,9 +592,9 @@ else:
                                 reset_all_data(); st.rerun()
 
     # =====================================================
-    # MODE 2: RIDER HANDOVER (เหมือนเดิม)
+    # MODE 2: RIDER HANDOVER (แก้ไข Log ให้ลง Sheet LOGS)
     # =====================================================
-    elif mode == "🏍️ ส่งงาน Rider":
+    elif st.session_state.app_mode == "DELIVERY":
         st.title("🏍️ ส่งงาน Rider")
         st.info("ถ่ายรูปเพิ่มเติมเพื่อส่งให้ Rider (จะบันทึกลง Folder เดิม)")
 
@@ -540,13 +603,13 @@ else:
         col_r1, col_r2 = st.columns([3, 1])
         man_rider_ord = col_r1.text_input("พิมพ์ Order ID", key="rider_ord_man").strip().upper()
         
-        #scan_rider_ord = back_camera_input("แตะเพื่อสแกน Order", key=f"rider_cam_ord_{st.session_state.cam_counter}")
-        
+        # NOTE: ใช้ input/scan เพื่อกำหนดค่า st.session_state.order_val สำหรับ Rider mode
         current_rider_order = ""
-        if man_rider_ord: current_rider_order = man_rider_ord
-        elif scan_rider_ord:
-            res = decode(Image.open(scan_rider_ord))
-            if res: current_rider_order = res[0].data.decode("utf-8").upper()
+        if man_rider_ord: 
+            current_rider_order = man_rider_ord
+        # elif scan_rider_ord: # Removed unused variable 'scan_rider_ord'
+        #     # Logic to handle camera scan for order ID if needed
+        #     pass
 
         if current_rider_order:
             st.session_state.order_val = current_rider_order
@@ -563,38 +626,62 @@ else:
                     else:
                         st.error(f"❌ {folder_name}")
                         st.session_state.target_rider_folder_id = None
+                        # Allow retry by clearing the order_val
+                        if st.button("สแกน Order ใหม่"): st.session_state.order_val = ""; st.rerun()
 
         # 2. ถ่ายรูป Rider
         if st.session_state.get('target_rider_folder_id') and st.session_state.order_val:
             st.markdown("---")
             st.markdown(f"#### 2. ถ่ายรูปส่งมอบ ({st.session_state.target_rider_folder_name})")
             
-            rider_img_input = back_camera_input("ถ่ายรูปส่งมอบ", key=f"rider_cam_act_{st.session_state.cam_counter}")
-            
-            if rider_img_input:
-                st.image(rider_img_input, caption="รูปที่จะส่ง", width=300)
+            # Use rider_photo state to hold the image data
+            if st.session_state.rider_photo is None:
+                rider_img_input = back_camera_input("ถ่ายรูปส่งมอบ", key=f"rider_cam_act_{st.session_state.cam_counter}")
+                
+                if rider_img_input:
+                    img_pil = Image.open(rider_img_input)
+                    if img_pil.mode in ("RGBA", "P"): img_pil = img_pil.convert("RGB")
+                    buf = io.BytesIO(); img_pil.save(buf, format='JPEG')
+                    
+                    st.session_state.rider_photo = buf.getvalue() # Store the bytes
+                    st.rerun()
+
+            if st.session_state.rider_photo is not None:
+                st.image(st.session_state.rider_photo, caption="รูปที่จะส่ง", width=300)
                 
                 col_upload, col_clear = st.columns([2, 1])
                 
                 with col_clear:
                     if st.button("🗑️ ซ่อน/ถ่ายใหม่", type="secondary", use_container_width=True):
-                         st.session_state.cam_counter += 1
-                         st.rerun()
+                        st.session_state.rider_photo = None
+                        st.session_state.cam_counter += 1
+                        st.rerun()
 
                 with col_upload:
                     if st.button("🚀 ยืนยันส่งรูปนี้", type="primary", use_container_width=True):
-                        with st.spinner("Uploading..."):
+                        with st.spinner("Uploading and Logging..."):
                             srv = authenticate_drive()
                             ts = get_thai_ts_filename()
                             fn = f"RIDER_{st.session_state.order_val}_{ts}.jpg"
                             
-                            uid = upload_photo(srv, rider_img_input, fn, st.session_state.target_rider_folder_id)
+                            # Upload (Pass bytes object)
+                            uid = upload_photo(srv, st.session_state.rider_photo, fn, st.session_state.target_rider_folder_id)
                             
-                            save_rider_log(st.session_state.current_user_name, st.session_state.order_val, uid, st.session_state.target_rider_folder_name)
-                            
-                            st.success("บันทึกรูป Rider สำเร็จ!")
+                            # FIX: เปลี่ยนไปเรียก save_log_to_sheet (บันทึกใน Logs Sheet)
+                            # Log data matching the required format (image_90383e.png)
+                            save_log_to_sheet(
+                                st.session_state.current_user_name,
+                                st.session_state.order_val,
+                                st.session_state.order_val,         # Barcode (ใช้ Order ID)
+                                "Delivery Confirmation",            # Product Name
+                                "Rider Handover",                   # Location
+                                1,                                  # Pick Qty
+                                st.session_state.current_user_id,   # User ID
+                                uid                                 # Image Link ID
+                            )
+
+                            st.success("บันทึกรูป Rider และ Log สำเร็จ!")
                             time.sleep(1.5)
-                            st.session_state.order_val = ""
-                            st.session_state.target_rider_folder_id = None
-                            st.session_state.cam_counter += 1
-                            st.rerun()
+                            reset_all_data(); st.rerun()
+
+# --- END MAIN SYSTEM ---
