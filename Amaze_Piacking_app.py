@@ -335,12 +335,9 @@ else:
         
         # ปรับค่าเริ่มต้นของ Radio ให้ตรงกับ app_mode
         current_sidebar_mode = "📦 แผนกแพ็คสินค้า"
-        if st.session_state.app_mode == "DELIVERY" or st.session_state.app_mode == "PACKING":
-             current_sidebar_mode = "📦 แผนกแพ็คสินค้า"
-        # หากมีการเลือก Rider เป็นค่าล่าสุด แต่ไม่ได้อยู่ในโหมด PACKING/PICKING
         if st.session_state.app_mode == "DELIVERY":
              current_sidebar_mode = "🛵 ส่งงาน Rider"
-             
+        
         # ตรวจสอบว่าโหมดปัจจุบันเป็นโหมดที่ต้องถูกล็อกหรือไม่
         is_in_packing_flow = st.session_state.app_mode == "PACKING"
         
@@ -376,6 +373,11 @@ else:
         st.title("📦 ระบบเบิกสินค้า")
         st.caption(f"👤: **{st.session_state.current_user_name}** | Mode: {st.session_state.app_mode}")
     # (Removed c2 logout button as it's now in sidebar)
+    
+    # *NEW ADVICE FOR MOBILE USERS*
+    # แสดงคำแนะนำการเปิด Sidebar เมื่อยังไม่ระบุ Order ID และไม่ได้อยู่ในโหมด Packing/Delivery (คืออยู่หน้าแรก)
+    if not st.session_state.order_val and st.session_state.app_mode == "PICKING":
+        st.info("💡 **ผู้ใช้มือถือ:** แตะที่ปุ่ม `>>` หรือ `☰` ที่มุมบนซ้ายเพื่อเลือกโหมดทำงานอื่น (Delivery) หรือ Logout")
 
     df_items = load_sheet_data(0)
 
