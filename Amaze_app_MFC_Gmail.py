@@ -10,6 +10,18 @@ from pyzbar.pyzbar import decode
 import io 
 import time
 
+# --- DEBUG CONNECTION ---
+# st.write("Testing Connection...")
+# try:
+#     creds = get_credentials()
+#     gc = gspread.authorize(creds)
+#     sh = gc.open_by_key(SHEET_ID)
+#     ws = sh.worksheet(USER_SHEET_NAME)
+#     st.success(f"✅ เชื่อมต่อ Google Sheet สำเร็จ! เจอข้อมูล {len(ws.get_all_values())} แถว")
+# except Exception as e:
+#     st.error(f"❌ เชื่อมต่อไม่ได้: {e}")
+#     st.stop()
+
 # --- IMPORT LIBRARY กล้อง ---
 try:
     from streamlit_back_camera_input import back_camera_input
@@ -456,3 +468,4 @@ else:
                             st.success("บันทึกรูป Rider สำเร็จ!")
                             time.sleep(1.5)
                             trigger_reset(); st.rerun()
+
