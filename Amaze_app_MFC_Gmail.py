@@ -10,6 +10,8 @@ from pyzbar.pyzbar import decode
 import io 
 import time
 from google.oauth2 import service_account
+from googleapiclient.errors import HttpError
+import json
 
 # --- DEBUG CONNECTION ---
 # st.write("Testing Connection...")
@@ -177,12 +179,27 @@ def find_existing_order_folder(service, order_id, main_parent_id):
 def upload_photo(service, file_obj, filename, folder_id):
     try:
         file_metadata = {'name': filename, 'parents': [folder_id]}
-        if isinstance(file_obj, bytes): media_body = io.BytesIO(file_obj)
-        else: media_body = file_obj 
+        
+        if isinstance(file_obj, bytes): 
+            media_body = io.BytesIO(file_obj)
+        else: 
+            media_body = file_obj 
+            
         media = MediaIoBaseUpload(media_body, mimetype='image/jpeg', chunksize=1024*1024, resumable=True)
+        
+        # --- จุดที่แก้: เพิ่มการดักจับ Error เพื่อดูรายละเอียด ---
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
         return file.get('id')
-    except Exception as e: raise e
+
+    except HttpError as error:
+        # แปลง Error เป็นข้อความที่อ่านออก
+        error_reason = json.loads(error.content.decode('utf-8'))
+        print(f"❌ DRIVE ERROR DETAILS: {error_reason}") # จะโชว์ใน Logs ของ Streamlit Cloud
+        st.error(f"Google Drive Error: {error_reason}") # จะโชว์หน้าจอ App
+        raise error # ส่ง Error ต่อไปให้โปรแกรมหยุดทำงาน
+    except Exception as e:
+        print(f"❌ GENERAL ERROR: {e}")
+        raise e
 
 # --- SAFE RESET SYSTEM ---
 def trigger_reset():
@@ -469,6 +486,7 @@ else:
                             st.success("บันทึกรูป Rider สำเร็จ!")
                             time.sleep(1.5)
                             trigger_reset(); st.rerun()
+
 
 
 
