@@ -9,6 +9,7 @@ from PIL import Image
 from pyzbar.pyzbar import decode 
 import io 
 import time
+from google.oauth2 import service_account
 
 # --- DEBUG CONNECTION ---
 # st.write("Testing Connection...")
@@ -53,18 +54,18 @@ USER_SHEET_NAME = 'User'
 # --- AUTHENTICATION ---
 def get_credentials():
     try:
-        if "oauth" in st.secrets:
-            info = st.secrets["oauth"]
-            creds = Credentials(
-                None,
-                refresh_token=info["refresh_token"],
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=info["client_id"],
-                client_secret=info["client_secret"]
+        if "service_account" in st.secrets:
+            # สร้าง Credentials จาก Service Account โดยตรง
+            creds = service_account.Credentials.from_service_account_info(
+                st.secrets["service_account"],
+                scopes=[
+                    "https://www.googleapis.com/auth/spreadsheets",
+                    "https://www.googleapis.com/auth/drive"
+                ]
             )
             return creds
         else:
-            st.error("❌ ไม่พบข้อมูล [oauth] ใน Secrets")
+            st.error("❌ ไม่พบข้อมูล [service_account] ใน Secrets")
             return None
     except Exception as e:
         st.error(f"❌ Error Credentials: {e}")
@@ -468,4 +469,5 @@ else:
                             st.success("บันทึกรูป Rider สำเร็จ!")
                             time.sleep(1.5)
                             trigger_reset(); st.rerun()
+
 
