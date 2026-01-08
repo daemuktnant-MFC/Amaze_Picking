@@ -428,19 +428,26 @@ else:
                                 fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
                                 ts = get_thai_ts_filename()
                                 
-                                # --- แก้ไขตรงนี้ (เปลี่ยนตัวแปรเก็บค่า ID) ---
-                                last_uploaded_id = "" # สร้างตัวแปรมารอรับ ID รูปสุดท้าย
-                                
+                                # 1. หาจำนวนรูปทั้งหมดก่อน
+                                total_imgs = len(st.session_state.photo_gallery)
+                                final_image_link_id = "" # เตรียมตัวแปรไว้เก็บ ID รูปสุดท้าย
+
                                 for i, b in enumerate(st.session_state.photo_gallery):
-                                    # ตั้งชื่อไฟล์เรียงลำดับ Img1, Img2, ...
-                                    fn = f"{st.session_state.order_val}_PACKED_{ts}_Img{i+1}.jpg"
+                                    # i เริ่มที่ 0, 1, 2...
+                                    current_seq = i + 1 
+                                    
+                                    # ตั้งชื่อไฟล์ให้มีลำดับชัดเจน Img1, Img2, ...
+                                    fn = f"{st.session_state.order_val}_PACKED_{ts}_Img{current_seq}.jpg"
                                     uid = upload_photo(srv, b, fn, fid)
                                     
-                                    # ทุกครั้งที่อัปโหลดเสร็จ ให้เก็บ ID ใส่ตัวแปรนี้ทับไปเรื่อยๆ
-                                    # พอจบลูป ค่าในนี้จะเป็น ID ของ "รูปสุดท้าย" ทันที
-                                    last_uploaded_id = uid 
+                                    # 2. เช็คเงื่อนไข: "ถ้านี่คือรอบสุดท้าย ให้จำ ID นี้ไว้"
+                                    if current_seq == total_imgs:
+                                        final_image_link_id = uid
                                 
-                                # บันทึกลง Sheet (ส่ง last_uploaded_id ไปแทน first_id)
+                                # 3. บันทึกลง Sheet (ใช้ ID ที่เราดักจับไว้)
+                                # ถ้าไม่มีรูปเลย (กัน Error) ให้ใส่ขีด -
+                                if not final_image_link_id: final_image_link_id = "-"
+
                                 for item in st.session_state.current_order_items:
                                     save_log_to_sheet(
                                         st.session_state.current_user_name, 
@@ -450,7 +457,7 @@ else:
                                         item['Location'], 
                                         item['Qty'], 
                                         st.session_state.current_user_id, 
-                                        last_uploaded_id  # <--- ใช้ ID รูปสุดท้ายตรงนี้
+                                        final_image_link_id  # <--- ส่ง Link รูปสุดท้ายไปบันทึก
                                     )
                                     
                                 st.balloons()
@@ -512,6 +519,7 @@ else:
                             st.success("บันทึกรูป Rider สำเร็จ!")
                             time.sleep(1.5)
                             trigger_reset(); st.rerun()
+
 
 
 
