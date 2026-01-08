@@ -426,15 +426,38 @@ else:
                             srv = authenticate_drive()
                             if srv:
                                 fid = get_target_folder_structure(srv, st.session_state.order_val, MAIN_FOLDER_ID)
-                                ts = get_thai_ts_filename(); first_id = ""
+                                ts = get_thai_ts_filename()
+                                
+                                # --- แก้ไขตรงนี้ (เปลี่ยนตัวแปรเก็บค่า ID) ---
+                                last_uploaded_id = "" # สร้างตัวแปรมารอรับ ID รูปสุดท้าย
+                                
                                 for i, b in enumerate(st.session_state.photo_gallery):
+                                    # ตั้งชื่อไฟล์เรียงลำดับ Img1, Img2, ...
                                     fn = f"{st.session_state.order_val}_PACKED_{ts}_Img{i+1}.jpg"
                                     uid = upload_photo(srv, b, fn, fid)
-                                    if i==0: first_id = uid 
+                                    
+                                    # ทุกครั้งที่อัปโหลดเสร็จ ให้เก็บ ID ใส่ตัวแปรนี้ทับไปเรื่อยๆ
+                                    # พอจบลูป ค่าในนี้จะเป็น ID ของ "รูปสุดท้าย" ทันที
+                                    last_uploaded_id = uid 
+                                
+                                # บันทึกลง Sheet (ส่ง last_uploaded_id ไปแทน first_id)
                                 for item in st.session_state.current_order_items:
-                                    save_log_to_sheet(st.session_state.current_user_name, st.session_state.order_val, item['Barcode'], item['Product Name'], item['Location'], item['Qty'], st.session_state.current_user_id, first_id)
-                                st.balloons(); st.success("✅ บันทึกครบทุกรายการเรียบร้อย!"); time.sleep(1.5)
-                                trigger_reset(); st.rerun()
+                                    save_log_to_sheet(
+                                        st.session_state.current_user_name, 
+                                        st.session_state.order_val, 
+                                        item['Barcode'], 
+                                        item['Product Name'], 
+                                        item['Location'], 
+                                        item['Qty'], 
+                                        st.session_state.current_user_id, 
+                                        last_uploaded_id  # <--- ใช้ ID รูปสุดท้ายตรงนี้
+                                    )
+                                    
+                                st.balloons()
+                                st.success("✅ บันทึกครบทุกรายการเรียบร้อย!")
+                                time.sleep(1.5)
+                                trigger_reset()
+                                st.rerun()
 
     # ================= MODE 2: RIDER =================
     elif mode == "🏍️ ส่งงาน Rider":
@@ -489,6 +512,7 @@ else:
                             st.success("บันทึกรูป Rider สำเร็จ!")
                             time.sleep(1.5)
                             trigger_reset(); st.rerun()
+
 
 
 
