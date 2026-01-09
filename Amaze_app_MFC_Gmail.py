@@ -136,36 +136,76 @@ def save_rider_log(picker_name, order_id, file_id, folder_name):
         worksheet.append_row([timestamp, picker_name, order_id, folder_name, image_link])
     except Exception as e: st.warning(f"⚠️ บันทึก Rider Log ไม่สำเร็จ: {e}")
 
+# --- [MODIFIED] FOLDER STRUCTURE LOGIC ---
 def get_target_folder_structure(service, order_id, main_parent_id):
-    date_folder_name = get_thai_date_str()
-    q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    res_date = service.files().list(q=q_date, fields="files(id)").execute(); files_date = res_date.get('files', [])
-    if files_date: date_folder_id = files_date[0]['id']
-    else:
-        meta_date = {'name': date_folder_name, 'parents': [main_parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
-        date_folder = service.files().create(body=meta_date, fields='id').execute(); date_folder_id = date_folder.get('id')
-    time_suffix = get_thai_time_suffix(); order_folder_name = f"{order_id}_{time_suffix}"
-    meta_order = {'name': order_folder_name, 'parents': [date_folder_id], 'mimeType': 'application/vnd.google-apps.folder'}
+    # คำนวณวันเวลาปัจจุบัน
+    now = datetime.utcnow() + timedelta(hours=7)
+    year_str = now.strftime("%Y")
+    month_str = now.strftime("%m")
+    date_str = now.strftime("%d-%m-%Y")
+
+    # Helper function: ค้นหาหรือสร้าง Folder
+    def _get_or_create(parent_id, name):
+        q = f"name = '{name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        res = service.files().list(q=q, fields="files(id)").execute()
+        files = res.get('files', [])
+        if files: return files[0]['id']
+        
+        # ถ้าไม่เจอให้สร้างใหม่
+        meta = {'name': name, 'parents': [parent_id], 'mimeType': 'application/vnd.google-apps.folder'}
+        folder = service.files().create(body=meta, fields='id').execute()
+        return folder.get('id')
+
+    # Step 1: จัดการ Folder ปี (YYYY)
+    year_id = _get_or_create(main_parent_id, year_str)
+    
+    # Step 2: จัดการ Folder เดือน (MM)
+    month_id = _get_or_create(year_id, month_str)
+    
+    # Step 3: จัดการ Folder วันที่ (DD-MM-YYYY)
+    date_id = _get_or_create(month_id, date_str)
+
+    # Step 4: สร้าง Folder Order (OrderNumber_HH-MM)
+    time_suffix = now.strftime("%H-%M")
+    order_folder_name = f"{order_id}_{time_suffix}"
+    meta_order = {'name': order_folder_name, 'parents': [date_id], 'mimeType': 'application/vnd.google-apps.folder'}
     order_folder = service.files().create(body=meta_order, fields='id').execute()
+    
     return order_folder.get('id')
 
 def find_existing_order_folder(service, order_id, main_parent_id):
-    date_folder_name = get_thai_date_str()
-    q_date = f"name = '{date_folder_name}' and '{main_parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    res_date = service.files().list(q=q_date, fields="files(id)").execute(); files_date = res_date.get('files', [])
+    # คำนวณวันเวลาปัจจุบันเพื่อหา Path
+    now = datetime.utcnow() + timedelta(hours=7)
+    year_str = now.strftime("%Y")
+    month_str = now.strftime("%m")
+    date_str = now.strftime("%d-%m-%Y")
+
+    # Helper function: ค้นหา Folder (คืนค่า None ถ้าไม่เจอ)
+    def _find_folder(parent_id, name):
+        q = f"name = '{name}' and '{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        res = service.files().list(q=q, fields="files(id)").execute()
+        files = res.get('files', [])
+        return files[0]['id'] if files else None
+
+    # Step 1: หา Folder ปี (YYYY)
+    year_id = _find_folder(main_parent_id, year_str)
+    if not year_id: return None, "ไม่พบ Folder ปีปัจจุบัน"
+
+    # Step 2: หา Folder เดือน (MM)
+    month_id = _find_folder(year_id, month_str)
+    if not month_id: return None, "ไม่พบ Folder เดือนปัจจุบัน"
+
+    # Step 3: หา Folder วันที่ (DD-MM-YYYY)
+    date_id = _find_folder(month_id, date_str)
+    if not date_id: return None, "ไม่พบ Folder วันที่ของวันนี้ (ยังไม่มีการเปิดบิลวันนี้)"
     
-    if not files_date: 
-        return None, "ไม่พบ Folder วันที่ของวันนี้ (ยังไม่มีการเปิดบิลวันนี้)"
-    
-    date_folder_id = files_date[0]['id']
-    
-    # --- FIX LOGIC: Search Broadly, Filter Strictly ---
-    # 1. ค้นหา Folder ที่ชื่อมีคำว่า order_id (แบบกว้างๆ)
-    q_order = f"'{date_folder_id}' in parents and name contains '{order_id}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    # Step 4: หา Folder Order ภายใต้ Folder วันที่
+    # 1. ค้นหาแบบกว้างๆ ก่อน
+    q_order = f"'{date_id}' in parents and name contains '{order_id}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     res_order = service.files().list(q=q_order, fields="files(id, name)", orderBy="createdTime desc").execute()
     files_order = res_order.get('files', [])
     
-    # 2. กรองใน Python เพื่อความแม่นยำ 100% ว่าต้องขึ้นต้นด้วย "ORDERID_" เท่านั้น
+    # 2. กรองให้ชัวร์ว่าขึ้นต้นด้วย OrderID_
     target_prefix = f"{order_id}_" # เช่น "B01_"
     
     found_folder = None
@@ -178,6 +218,7 @@ def find_existing_order_folder(service, order_id, main_parent_id):
         return found_folder['id'], found_folder['name']
     else:
         return None, f"ไม่พบ Folder ของ Order: {order_id} ในวันนี้"
+# ---------------------------------------------
 
 def upload_photo(service, file_obj, filename, folder_id):
     try:
@@ -519,10 +560,3 @@ else:
                             st.success("บันทึกรูป Rider สำเร็จ!")
                             time.sleep(1.5)
                             trigger_reset(); st.rerun()
-
-
-
-
-
-
-
